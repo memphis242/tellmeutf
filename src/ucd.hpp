@@ -4,6 +4,7 @@
 // tools/gen_ucd.cpp); no function here touches the file system.
 #pragma once
 
+#include <cstddef>
 #include <cstdint>
 #include <string>
 #include <string_view>
@@ -71,6 +72,33 @@ struct Label {
 // (upper case ASCII). Order is stable: listed names by code point, then
 // aliases.
 [[nodiscard]] std::vector<Label> descriptive_labels();
+
+struct FuzzyMatch {
+    char32_t cp = 0;
+    double score = 0.0;  // similarity to the query, in (0, 1]
+    // The evidence behind `score`, used by is_confident():
+    double word_score = 0.0;  // word-level similarity, in [0, 1]
+    double char_score = 0.0;  // similarity of the label and query with spaces removed, in [0, 1]
+    double char_coverage = 0.0;  // share of the query's character trigrams found in the label; 0 for short queries
+    // True when some query word matched a label word only weakly (for example
+    // by two edits on a short word).
+    bool weak_word_match = false;
+};
+
+// Approximate best-match retrieval over every name and alias (the same labels
+// as search()): tolerates typos, run-together or split words, plural and
+// -ing/-ed/-ly variants, extra or missing words and a different word order
+// (see docs/design.md, "Approximate fallback"). Best first, at most `limit`
+// entries, each code point once. Empty when the query has no words, holds a
+// non-ASCII byte, is too long, or nothing is similar enough. The first call
+// builds an index; later calls reuse it. Thread-safe.
+[[nodiscard]] std::vector<FuzzyMatch> fuzzy_search(std::string_view query, std::size_t limit);
+
+// True when matches.front() stands clearly above the rest and rests on strong
+// evidence from one signal (strong word matches, or the query being the label
+// with its spaces removed), so a caller may treat it as the answer rather than
+// offer a list. False for an empty list.
+[[nodiscard]] bool is_confident(const std::vector<FuzzyMatch> &matches);
 
 // Version of the compiled-in data, for example "18.0.0".
 [[nodiscard]] std::string_view unicode_version();

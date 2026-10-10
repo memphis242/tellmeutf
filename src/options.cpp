@@ -26,6 +26,7 @@ constexpr std::string_view kUsage =
     "  -s, --single         show only the result (same as -C 0)\n"
     "  -n, --name           read the arguments as a name, even if they look like hex\n"
     "  -m N, --max=N        candidates to list for an ambiguous name (default 20)\n"
+    "  -e, --exact          match names strictly; no approximate fallback for typos\n"
     "  -h, --help           show this help\n"
     "  -V, --version        show the version\n"
     "  --                   end of options\n"
@@ -37,11 +38,15 @@ constexpr std::string_view kUsage =
     "  tellmeutf -s heavy check mark\n"
     "  tellmeutf --name face    read 'face' as a name, not as hex digits\n"
     "\n"
-    "Exit status: 0 success, 1 name not found, 2 usage error, 3 ambiguous name,\n"
-    "4 could not write the output.\n";
+    "A name with no strict match is matched approximately (typos, run-together\n"
+    "words, plurals, extra words): a clear winner is shown with a note on stderr,\n"
+    "otherwise the closest matches are listed. --exact turns this off.\n"
+    "\n"
+    "Exit status: 0 success, 1 name not found, 2 usage error, 3 ambiguous name\n"
+    "(or only approximate matches), 4 could not write the output.\n";
 
 // Options that can be written in short or long form.
-enum class Opt { Context, Single, Name, Max, Help, Version };
+enum class Opt { Context, Single, Name, Max, Exact, Help, Version };
 
 struct OptionSpec {
     Opt opt;
@@ -54,6 +59,7 @@ std::optional<OptionSpec> short_spec(const char c) {
     case 's': return OptionSpec{Opt::Single, false};
     case 'n': return OptionSpec{Opt::Name, false};
     case 'm': return OptionSpec{Opt::Max, true};
+    case 'e': return OptionSpec{Opt::Exact, false};
     case 'h': return OptionSpec{Opt::Help, false};
     case 'V': return OptionSpec{Opt::Version, false};
     default: return std::nullopt;
@@ -65,6 +71,7 @@ std::optional<OptionSpec> long_spec(const std::string_view name) {
     if (name == "single") return OptionSpec{Opt::Single, false};
     if (name == "name") return OptionSpec{Opt::Name, false};
     if (name == "max") return OptionSpec{Opt::Max, true};
+    if (name == "exact") return OptionSpec{Opt::Exact, false};
     if (name == "help") return OptionSpec{Opt::Help, false};
     if (name == "version") return OptionSpec{Opt::Version, false};
     return std::nullopt;
@@ -149,6 +156,9 @@ private:
             return false;
         case Opt::Name:
             result_.options.force_name = true;
+            return false;
+        case Opt::Exact:
+            result_.options.exact_only = true;
             return false;
         case Opt::Help:
             result_.action = Action::Help;

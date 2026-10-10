@@ -8,6 +8,7 @@
 #include <unistd.h>
 
 #include <algorithm>
+#include <array>
 #include <cassert>
 #include <cerrno>
 #include <cstdio>
@@ -122,6 +123,51 @@ void show_window(Output &out, const char32_t target, const struct tellmeutf::opt
     out.write_block(tellmeutf::render::render_block(rows, target_index, style));
 }
 
+// "U+" and at least 4 uppercase hex digits.
+std::string code_point_label(const char32_t cp) {
+    std::array<char, 16> buffer{};
+    const int length = std::snprintf(buffer.data(), buffer.size(), "U+%04X", static_cast<unsigned>(cp));
+    assert(length > 0 && static_cast<std::size_t>(length) < buffer.size());
+    return std::string(buffer.data(), static_cast<std::size_t>(length));
+}
+
+// Rows for the first `count` code points of a candidate list.
+std::vector<ucd::CharInfo> candidate_rows(const std::vector<char32_t> &code_points, const std::size_t count) {
+    assert(count <= code_points.size());
+    std::vector<ucd::CharInfo> rows;
+    rows.reserve(count);
+    for (std::size_t i = 0; i < count; ++i) {
+        rows.push_back(ucd::lookup(code_points[i]));
+    }
+    return rows;
+}
+
+// Handles a name with no strict match: shows a clearly best approximate match,
+// or lists the closest ones. Returns the exit status of this lookup.
+int resolve_approximate(Output &out, const std::string &name, const struct tellmeutf::options::Options &options) {
+    const std::string shown_name = tellmeutf::utf8::escape_for_message(name);
+    const std::vector<ucd::FuzzyMatch> matches = ucd::fuzzy_search(name, options.max_candidates);
+    if (matches.empty()) {
+        report("no character matches '" + shown_name + "'; try fewer or shorter words, or give a code point such as U+276F");
+        return kNotFound;
+    }
+    if (ucd::is_confident(matches)) {
+        const struct ucd::CharInfo best = ucd::lookup(matches.front().cp);
+        show_window(out, best.cp, options);
+        report("no exact match for '" + shown_name + "'; showing the closest: " + best.name + " (" +
+               code_point_label(best.cp) + "). Use --exact to turn off approximate matching.");
+        return kOk;
+    }
+    std::vector<char32_t> code_points;
+    code_points.reserve(matches.size());
+    for (const struct ucd::FuzzyMatch &match : matches) {
+        code_points.push_back(match.cp);
+    }
+    out.write_block(tellmeutf::render::render_block(candidate_rows(code_points, code_points.size()), std::nullopt, {}));
+    report("no exact match for '" + shown_name + "'; these are the closest matches.");
+    return kAmbiguous;
+}
+
 // Resolves a name lookup. Returns the exit status of this lookup.
 int resolve_name(Output &out, const std::string &name, const struct tellmeutf::options::Options &options) {
     std::vector<char32_t> matches = ucd::find_exact(name);
@@ -129,6 +175,9 @@ int resolve_name(Output &out, const std::string &name, const struct tellmeutf::o
         matches = ucd::search(name);
     }
     if (matches.empty()) {
+        if (!options.exact_only) {
+            return resolve_approximate(out, name, options);
+        }
         report("no character matches '" + tellmeutf::utf8::escape_for_message(name) + "'; try fewer or shorter words, or give a code point such as U+276F");
         return kNotFound;
     }
@@ -138,12 +187,7 @@ int resolve_name(Output &out, const std::string &name, const struct tellmeutf::o
     }
 
     const std::size_t shown = std::min<std::size_t>(matches.size(), options.max_candidates);
-    std::vector<ucd::CharInfo> rows;
-    rows.reserve(shown);
-    for (std::size_t i = 0; i < shown; ++i) {
-        rows.push_back(ucd::lookup(matches[i]));
-    }
-    out.write_block(tellmeutf::render::render_block(rows, std::nullopt, {}));
+    out.write_block(tellmeutf::render::render_block(candidate_rows(matches, shown), std::nullopt, {}));
     std::string note = "'" + tellmeutf::utf8::escape_for_message(name) + "' matches " + std::to_string(matches.size()) + " characters";
     note += shown < matches.size() ? "; showing the first " + std::to_string(shown) : std::string("; showing all");
     note += ". Add more words to narrow it down";

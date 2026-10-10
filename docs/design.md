@@ -68,6 +68,70 @@ hyphen). A hyphen anywhere else stays part of its word, which keeps
   prefix-only matches; (2) fewer words in the matching label first; (3) lower
   code point first. A single result is treated like an exact match; several results are
   ambiguous.
+- **Approximate** (only when nothing matches strictly, and not with `--exact`):
+  see the next subsection.
+
+#### Approximate fallback
+
+A name that has no exact and no prefix match is scored against every label
+(names and aliases; Hangul syllable names only when the query has a word
+similar to HANGUL or SYLLABLE) by information-retrieval style similarity,
+so typos and loose phrasing still find their character. The ideograph ranges
+are not enumerated here either. The query must be ASCII and at most 200 bytes
+(otherwise there is no approximate match), and only its first 12 words count.
+Two signals are fused into one score in (0, 1]:
+
+- **Word signal.** A query word is similar to a label word when they are equal,
+  share a light stem (trailing -ING, -ED, -LY, -ES, -S and E removed: `smile`
+  and `smiling`, `arrows` and `arrow`), the query word is a prefix of it, or
+  they are within a few edits (adjacent transpositions count as one edit; none
+  allowed for 1 to 2 letters, one for 3 to 5, two from 6; never for words with
+  digits). Edit matches are weighted by how common the label word is, so `hart`
+  resolves to HEART before HARP. Words are weighted by idf over the label
+  vocabulary, so a rare word (SNOWMAN) outweighs a common one (SIGN, LETTER).
+  A label's word score is the F-measure of recall (how much of the query's
+  weight the label covers) and precision (how much of the label's weight the
+  query explains), recall weighted higher, so `snowman symbol` still finds
+  SNOWMAN and a long label does not beat a tight one. Word order is ignored.
+- **Character signal.** Dice similarity of the character trigrams of the query
+  and the label with spaces and punctuation removed, which survives words run
+  together or split apart (`checkmark`, `pile ofpoo`).
+
+The signals combine as independent evidence, so agreement raises a label above
+what either gives alone. Each code point keeps its best label; results are
+ordered by score, then fewer words, then lower code point.
+
+The result is *confident* (the closest match may be shown as the answer) only
+when all of these hold:
+
+- its score reaches a minimum and leads the second by a margin (or it is the
+  only result); and
+- one signal carries it by itself. Either the word score reaches a minimum and
+  every matched query word is a strong match (equal, same stem, a proper prefix
+  of at least 4 letters covering most of the label word, one edit on a word of
+  6 or more letters, two edits on a word of 8 or more letters); a weak match on
+  a shorter word is accepted when another query word matches strongly or when
+  every word of a multi-word query matches. Or the query is essentially the
+  label with its spaces removed: the trigram Dice similarity and the share of
+  the query's trigrams found in the label are both high, for a query of at
+  least six trigrams.
+
+So `snowmann`, `strawbery` and `checkmark` are confident, while a single short
+word that is two edits from some other word (`coffee` for COFFIN) or that only
+hides across the boundary of a longer name (`dice` in SHAVED ICE) is listed
+instead. Behavior:
+
+- Nothing similar enough: the not-found error, status 1.
+- Confident: shown like a single result (the context window per `-C`), status
+  0, with a note on stderr: `no exact match for '<name>'; showing the closest:
+  <NAME> (U+XXXX). Use --exact to turn off approximate matching.`
+- Otherwise (including a best match without such evidence): up to `--max` candidate rows (same format as the ambiguous list)
+  and a note on stderr, status 3.
+
+The index (vocabulary, idf, inverted lists) is built on the first approximate
+lookup, so strict lookups never pay for it (about 25 ms once, then about 1 ms
+per query in a release build). Single-result mode (`-s`) behaves the same; the
+note still goes to stderr.
 
 ### Output
 
@@ -123,7 +187,10 @@ Width in cells is 2 when the code point is East Asian Wide or Fullwidth
 - Ambiguous: print up to `--max` (default 20) candidate rows to stdout (same row
   format, no marker, no context), then a note to stderr saying how many matched
   and how to narrow. Exit status 3. Single-result mode behaves identically.
-- Not found: a message to stderr, exit status 1.
+- Not found: a message to stderr, exit status 1. This is after the approximate
+  fallback finds nothing similar (always, with `--exact`).
+- Approximate list: when only approximate matches exist and none stands out,
+  exit status 3 (see "Approximate fallback").
 
 ### Options
 
@@ -132,6 +199,7 @@ Width in cells is 2 when the code point is East Asian Wide or Fullwidth
 -s, --single        show only the result (same as -C 0)
 -n, --name          read the arguments as a name, even if they look like hex
 -m N, --max=N       candidates to list for an ambiguous name (default 20)
+-e, --exact         match names strictly; no approximate fallback
 -h, --help          usage
 -V, --version       "tellmeutf 0.1.0 (Unicode 18.0.0)"
 --                  end of options
@@ -149,9 +217,9 @@ With no arguments the usage goes to stderr and the status is 2.
 | status | meaning |
 |--------|---------|
 | 0 | every lookup succeeded |
-| 1 | a name matched nothing |
+| 1 | a name matched nothing, not even approximately |
 | 2 | usage error (bad option, invalid UTF-8, code point out of range, ...) |
-| 3 | a name was ambiguous |
+| 3 | a name was ambiguous, or only approximate matches stood out too little |
 | 4 | could not write the output |
 
 Malformed arguments (invalid UTF-8, a bad code point, a bad option) are rejected
@@ -175,6 +243,7 @@ tools/gen_ucd.cpp       build-time generator: UCD text -> ucd_tables.cpp
 src/ucd.hpp             PUBLIC CONTRACT of the lookup library (names, categories, widths)
 src/ucd_tables.hpp      internal: shape of the generated tables
 src/ucd.cpp             lookup + name search over the generated tables
+src/fuzzy.cpp           approximate name retrieval (lazy index; ucd_internal.hpp shares helpers)
 src/utf8.{hpp,cpp}      strict UTF-8 decode / encode
 src/query.{hpp,cpp}     argument interpretation (pure; no UCD access)
 src/options.{hpp,cpp}   command-line option parsing (pure; no globals)

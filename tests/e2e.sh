@@ -166,6 +166,57 @@ run qzxjv nonsensename
 err_has_text
 [[ ! -s $out ]] || fail "$cmd: stdout should be empty"
 
+# Approximate fallback: a typo resolves to the closest name with a note on stderr.
+cmd="snowmann"
+run -s snowmann
+[[ $status -eq 0 ]] || fail "$cmd: status $status, wanted 0"
+[[ $(rows) -eq 1 ]] || fail "$cmd: expected 1 row, got $(rows)"
+out_has U+2603
+out_has SNOWMAN
+err_has_text
+grep -qF -- "snowmann" "$err" || fail "$cmd: note should echo the query"
+grep -qF -- "U+2603" "$err" || fail "$cmd: note should name the code point"
+cmd="chek mark"
+run -s chek mark
+[[ $status -eq 0 || $status -eq 3 ]] || fail "$cmd: status $status"
+out_has U+2713
+err_has_text
+run snowmann
+[[ $status -eq 0 && $(rows) -eq 5 ]] || fail "snowmann with context: status $status rows $(rows)"
+[[ $(grep -c '^>' "$out") -eq 1 ]] || fail "snowmann with context: expected one marked row"
+
+# --exact (and -e) turn the fallback off.
+for flag in --exact -e; do
+    cmd="$flag snowmann"
+    run "$flag" snowmann
+    [[ $status -eq 1 ]] || fail "$cmd: status $status, wanted 1"
+    err_has_text
+    [[ ! -s $out ]] || fail "$cmd: stdout should be empty"
+done
+run -e snowman
+[[ $status -eq 0 ]] || fail "-e snowman (strict match): status $status"
+out_has U+2603
+
+# A vague misspelling lists the closest matches with status 3.
+cmd="arrowz"
+run arrowz
+[[ $status -eq 3 ]] || fail "$cmd: status $status, wanted 3"
+err_has_text
+[[ $(rows) -gt 1 ]] || fail "$cmd: expected several candidate rows"
+out_lacks '>'
+out_has ARROW
+run -m 3 arrowz
+[[ $status -eq 3 && $(rows) -eq 3 ]] || fail "-m 3 arrowz: status $status rows $(rows)"
+run -e arrowz
+[[ $status -eq 1 ]] || fail "-e arrowz: status $status, wanted 1"
+cmd=
+
+# Strict matches are untouched by the fallback.
+run -s heavy check mark
+[[ $status -eq 0 && $(rows) -eq 1 ]] || fail "strict name: status $status rows $(rows)"
+out_has U+2714
+[[ ! -s $err ]] || fail "strict name: stderr should be empty"
+
 # Echoed user text is escaped: an ESC byte in a name never reaches stderr.
 cmd="ESC in name"
 run $'qzxjv\x1b[2Jnope'
