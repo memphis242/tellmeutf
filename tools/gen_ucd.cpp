@@ -174,7 +174,7 @@ struct UnicodeData {
 };
 
 UnicodeData parse_unicode_data(const std::string &file) {
-    UnicodeData data;
+    struct UnicodeData data;
     // Open range state: set between a "First" line and its "Last" line.
     bool in_range = false;
     std::uint32_t range_first = 0;
@@ -182,7 +182,7 @@ UnicodeData parse_unicode_data(const std::string &file) {
     std::size_t range_line = 0;
     std::string range_category;
 
-    for (const SourceLine &source : read_lines(file)) {
+    for (const struct SourceLine &source : read_lines(file)) {
         const std::size_t line = source.number;
         if (source.text.empty()) {
             continue;
@@ -259,19 +259,46 @@ UnicodeData parse_unicode_data(const std::string &file) {
         }
     }
     std::sort(data.ranges.begin(), data.ranges.end(),
-              [](const Range &a, const Range &b) { return a.first < b.first; });
+              [](const struct Range &a, const struct Range &b) { return a.first < b.first; });
     for (std::size_t i = 0; i < data.ranges.size(); ++i) {
         if (i > 0 && data.ranges[i].first <= data.ranges[i - 1].last) {
             fail(file, 0, "overlapping ranges");
         }
-        const Range &range = data.ranges[i];
+        const struct Range &range = data.ranges[i];
+        if (range.rule == "HangulSyllable" && (range.first != 0xAC00 || range.last != 0xD7A3)) {
+            fail(file, 0, "the Hangul Syllable range is " + hex(range.first) + ".." + hex(range.last) +
+                              " but src/ucd.cpp derives syllable names for 0xAC00..0xD7A3 only");
+        }
         const auto inside = std::lower_bound(data.entries.begin(), data.entries.end(), range.first,
-                                             [](const Entry &e, const std::uint32_t cp) { return e.cp < cp; });
+                                             [](const struct Entry &e, const std::uint32_t cp) { return e.cp < cp; });
         if (inside != data.entries.end() && inside->cp <= range.last) {
             fail(file, 0, "an explicit entry lies inside a First/Last range (" + hex(inside->cp) + ")");
         }
     }
     return data;
+}
+
+// The first line of a UCD file reads "# <stem>-<version>.txt"; returns the
+// version.
+std::string header_version(const std::string &file, const std::vector<SourceLine> &lines,
+                           const std::string_view stem) {
+    if (lines.empty()) {
+        fail(file, 0, "empty file");
+    }
+    const std::string header_prefix = "# " + std::string(stem) + "-";
+    constexpr std::string_view header_suffix = ".txt";
+    const std::string_view header = lines.front().text;
+    if (!header.starts_with(header_prefix) || !header.ends_with(header_suffix) ||
+        header.size() <= header_prefix.size() + header_suffix.size()) {
+        fail(file, 1, "first line must look like '" + header_prefix + "<version>.txt'");
+    }
+    const std::string version(
+        header.substr(header_prefix.size(), header.size() - header_prefix.size() - header_suffix.size()));
+    if (version.find_first_not_of("0123456789.") != std::string::npos || version.front() == '.' ||
+        version.back() == '.') {
+        fail(file, 1, "unparsable Unicode version '" + version + "'");
+    }
+    return version;
 }
 
 struct AliasData {
@@ -285,27 +312,10 @@ AliasData parse_name_aliases(const std::string &file) {
         {"figment", "Figment"},       {"abbreviation", "Abbreviation"},
     };
     const std::vector<SourceLine> lines = read_lines(file);
-    if (lines.empty()) {
-        fail(file, 0, "empty file");
-    }
+    struct AliasData data;
+    data.version = header_version(file, lines, "NameAliases");
 
-    // The first line is "# NameAliases-<version>.txt".
-    constexpr std::string_view header_prefix = "# NameAliases-";
-    constexpr std::string_view header_suffix = ".txt";
-    const std::string_view header = lines.front().text;
-    if (!header.starts_with(header_prefix) || !header.ends_with(header_suffix) ||
-        header.size() <= header_prefix.size() + header_suffix.size()) {
-        fail(file, 1, "first line must look like '# NameAliases-<version>.txt'");
-    }
-    AliasData data;
-    data.version = std::string(
-        header.substr(header_prefix.size(), header.size() - header_prefix.size() - header_suffix.size()));
-    if (data.version.find_first_not_of("0123456789.") != std::string::npos || data.version.front() == '.' ||
-        data.version.back() == '.') {
-        fail(file, 1, "unparsable Unicode version '" + data.version + "'");
-    }
-
-    for (const SourceLine &source : lines) {
+    for (const struct SourceLine &source : lines) {
         const std::string_view text = source.text;
         if (text.empty() || text.front() == '#') {
             continue;
@@ -329,13 +339,17 @@ AliasData parse_name_aliases(const std::string &file) {
     }
     // Stable: aliases of one code point keep their file order.
     std::stable_sort(data.aliases.begin(), data.aliases.end(),
-                     [](const Alias &a, const Alias &b) { return a.cp < b.cp; });
+                     [](const struct Alias &a, const struct Alias &b) { return a.cp < b.cp; });
     return data;
 }
 
-std::vector<WideRange> parse_east_asian_width(const std::string &file) {
+std::vector<WideRange> parse_east_asian_width(const std::string &file, const std::string &expected_version) {
+    const std::vector<SourceLine> lines = read_lines(file);
+    if (const std::string version = header_version(file, lines, "EastAsianWidth"); version != expected_version) {
+        fail(file, 1, "Unicode version " + version + " differs from the NameAliases.txt version " + expected_version);
+    }
     std::vector<WideRange> ranges;
-    for (const SourceLine &source : read_lines(file)) {
+    for (const struct SourceLine &source : lines) {
         std::string_view text = source.text;
         if (const std::size_t hash = text.find('#'); hash != std::string_view::npos) {
             text = text.substr(0, hash);
@@ -388,45 +402,51 @@ std::vector<WideRange> parse_east_asian_width(const std::string &file) {
     return ranges;
 }
 
-// Collects names into one blob and hands out (offset, length) references.
+// Collects names into one blob and hands out (offset, length) references. The
+// blob is emitted as a byte array: a string literal of this size exceeds the
+// limit that C++ compilers are required to support.
 class NameBlob {
 public:
     std::string reference(const std::string &name) {
         assert(!name.empty() && name.size() <= kMaxNameLength);
-        const std::size_t offset = text_.size();
-        text_ += name;
-        literals_ += "\"" + name + "\"\n";
+        const std::size_t offset = bytes_.size();
+        bytes_ += name;
         return "{" + std::to_string(offset) + "," + std::to_string(name.size()) + "}";
     }
-    // Names contain only [A-Z0-9 -] (validated while parsing), so the literals
-    // need no escapes.
-    const std::string &literals() const { return literals_; }
-    std::size_t size() const { return text_.size(); }
+    std::size_t size() const { return bytes_.size(); }
+    // Comma-separated decimal byte values, 32 per line.
+    std::string array_body() const {
+        std::string body;
+        for (std::size_t i = 0; i < bytes_.size(); ++i) {
+            body += std::to_string(static_cast<unsigned>(static_cast<unsigned char>(bytes_[i])));
+            body += (i + 1) % 32 == 0 ? ",\n" : ",";
+        }
+        return body;
+    }
 
 private:
-    std::string text_;
-    std::string literals_;
+    std::string bytes_;
 };
 
-std::string generate(const UnicodeData &unicode, const AliasData &aliases, const std::vector<WideRange> &wide) {
+std::string generate(const struct UnicodeData &unicode, const struct AliasData &aliases, const std::vector<WideRange> &wide) {
     NameBlob blob;
     std::ostringstream entries;
-    for (const Entry &entry : unicode.entries) {
+    for (const struct Entry &entry : unicode.entries) {
         entries << "{" << hex(entry.cp) << ",Category::" << entry.category << "," << blob.reference(entry.name)
                 << "},\n";
     }
     std::ostringstream ranges;
-    for (const Range &range : unicode.ranges) {
+    for (const struct Range &range : unicode.ranges) {
         ranges << "{" << hex(range.first) << "," << hex(range.last) << ",Category::" << range.category
                << ",RangeRule::" << range.rule << "},\n";
     }
     std::ostringstream alias_rows;
-    for (const Alias &alias : aliases.aliases) {
+    for (const struct Alias &alias : aliases.aliases) {
         alias_rows << "{" << hex(alias.cp) << ",AliasType::" << alias.type << "," << blob.reference(alias.name)
                    << "},\n";
     }
     std::ostringstream wide_rows;
-    for (const WideRange &range : wide) {
+    for (const struct WideRange &range : wide) {
         wide_rows << "{" << hex(range.first) << "," << hex(range.last) << "},\n";
     }
 
@@ -434,14 +454,14 @@ std::string generate(const UnicodeData &unicode, const AliasData &aliases, const
     out << "// Generated by tools/gen_ucd.cpp from the vendored UCD files. Do not edit.\n"
            "#include \"ucd_tables.hpp\"\n\n"
            "namespace tellmeutf::ucd::tables {\nnamespace {\n\n"
-           "constexpr char kNames[] =\n"
-        << blob.literals() << ";\n\n"
+           "constexpr char kNames[] = {\n"
+        << blob.array_body() << "\n};\n\n"
         << "constexpr Entry kEntries[] = {\n" << entries.str() << "};\n\n"
         << "constexpr Range kRanges[] = {\n" << ranges.str() << "};\n\n"
         << "constexpr Alias kAliases[] = {\n" << alias_rows.str() << "};\n\n"
         << "constexpr WideRange kWide[] = {\n" << wide_rows.str() << "};\n\n"
         << "}  // namespace\n\n"
-        << "static_assert(sizeof(kNames) == " << blob.size() << " + 1);\n\n"
+        << "static_assert(sizeof(kNames) == " << blob.size() << ");\n\n"
         << "constexpr Tables kTables{\n"
            "    .version = \"" << aliases.version << "\",\n"
            "    .names = std::string_view(kNames, " << blob.size() << "),\n"
@@ -477,17 +497,17 @@ int main(const int argc, const char *const argv[]) {
         return 2;
     }
 
-    const UnicodeData unicode = parse_unicode_data(inputs[0]);
-    const AliasData aliases = parse_name_aliases(inputs[1]);
-    const std::vector<WideRange> wide = parse_east_asian_width(inputs[2]);
+    const struct UnicodeData unicode = parse_unicode_data(inputs[0]);
+    const struct AliasData aliases = parse_name_aliases(inputs[1]);
+    const std::vector<WideRange> wide = parse_east_asian_width(inputs[2], aliases.version);
 
     // Every alias must refer to a code point that the other data describes as
     // an explicit entry or inside a range.
-    for (const Alias &alias : aliases.aliases) {
+    for (const struct Alias &alias : aliases.aliases) {
         const auto entry = std::lower_bound(unicode.entries.begin(), unicode.entries.end(), alias.cp,
-                                            [](const Entry &e, const std::uint32_t cp) { return e.cp < cp; });
+                                            [](const struct Entry &e, const std::uint32_t cp) { return e.cp < cp; });
         const bool listed = entry != unicode.entries.end() && entry->cp == alias.cp;
-        const bool in_range = std::any_of(unicode.ranges.begin(), unicode.ranges.end(), [&](const Range &r) {
+        const bool in_range = std::any_of(unicode.ranges.begin(), unicode.ranges.end(), [&](const struct Range &r) {
             return alias.cp >= r.first && alias.cp <= r.last;
         });
         if (!listed && !in_range) {

@@ -83,18 +83,18 @@ void split_words(const std::string_view text, std::vector<std::string_view> &wor
 // ---------------------------------------------------------------------------
 // Tables
 
-[[nodiscard]] std::string_view name_text(const tbl::NameRef ref) {
+[[nodiscard]] std::string_view name_text(const struct tbl::NameRef ref) {
     assert(static_cast<std::size_t>(ref.offset) + ref.length <= tbl::kTables.names.size());
     return tbl::kTables.names.substr(ref.offset, ref.length);
 }
 
-[[nodiscard]] const tbl::Entry *find_entry(const char32_t cp) {
-    const std::span<const tbl::Entry> entries = tbl::kTables.entries;
+[[nodiscard]] const struct tbl::Entry *find_entry(const char32_t cp) {
+    const std::span<const struct tbl::Entry> entries = tbl::kTables.entries;
     const auto it = std::ranges::lower_bound(entries, cp, {}, &tbl::Entry::cp);
     return it != entries.end() && it->cp == cp ? &*it : nullptr;
 }
 
-[[nodiscard]] const tbl::Range *find_range(const char32_t cp) {
+[[nodiscard]] const struct tbl::Range *find_range(const char32_t cp) {
     for (const struct tbl::Range &range : tbl::kTables.ranges) {
         if (cp >= range.first && cp <= range.last) {
             return &range;
@@ -103,14 +103,14 @@ void split_words(const std::string_view text, std::vector<std::string_view> &wor
     return nullptr;
 }
 
-[[nodiscard]] std::span<const tbl::Alias> aliases_of(const char32_t cp) {
-    const std::span<const tbl::Alias> aliases = tbl::kTables.aliases;
+[[nodiscard]] std::span<const struct tbl::Alias> aliases_of(const char32_t cp) {
+    const std::span<const struct tbl::Alias> aliases = tbl::kTables.aliases;
     const auto bounds = std::ranges::equal_range(aliases, cp, {}, &tbl::Alias::cp);
-    return std::span<const tbl::Alias>(bounds.begin(), bounds.end());
+    return std::span<const struct tbl::Alias>(bounds.begin(), bounds.end());
 }
 
 [[nodiscard]] bool is_wide(const char32_t cp) {
-    const std::span<const tbl::WideRange> wide = tbl::kTables.wide;
+    const std::span<const struct tbl::WideRange> wide = tbl::kTables.wide;
     // First range whose last code point is >= cp.
     const auto it = std::ranges::lower_bound(wide, cp, {}, &tbl::WideRange::last);
     return it != wide.end() && it->first <= cp;
@@ -123,7 +123,7 @@ void split_words(const std::string_view text, std::vector<std::string_view> &wor
 // Display name of a control: its first control alias, else its first figment
 // alias, else "<control>".
 [[nodiscard]] std::string control_name(const char32_t cp) {
-    const std::span<const tbl::Alias> aliases = aliases_of(cp);
+    const std::span<const struct tbl::Alias> aliases = aliases_of(cp);
     for (const tbl::AliasType wanted : {tbl::AliasType::Control, tbl::AliasType::Figment}) {
         for (const struct tbl::Alias &alias : aliases) {
             if (alias.type == wanted) {
@@ -190,6 +190,14 @@ constexpr std::string_view kHangulPrefix = "HANGUL SYLLABLE ";
     return {};
 }
 
+// Uppercase hexadecimal with at least 4 digits.
+[[nodiscard]] std::string canonical_hex(const unsigned value) {
+    char digits[16];
+    const int length = std::snprintf(digits, sizeof digits, "%04X", value);
+    assert(length > 0 && static_cast<std::size_t>(length) < sizeof digits);
+    return std::string(digits, static_cast<std::size_t>(length));
+}
+
 [[nodiscard]] std::string range_name(const tbl::RangeRule rule, const char32_t cp) {
     switch (rule) {
     case tbl::RangeRule::HangulSyllable:
@@ -202,10 +210,7 @@ constexpr std::string_view kHangulPrefix = "HANGUL SYLLABLE ";
     case tbl::RangeRule::TangutIdeograph:
     case tbl::RangeRule::JurchenCharacter:
     case tbl::RangeRule::SealCharacter: {
-        char digits[16];
-        const int length = std::snprintf(digits, sizeof digits, "%04X", static_cast<unsigned>(cp));
-        assert(length > 0 && static_cast<std::size_t>(length) < sizeof digits);
-        return std::string(ideograph_prefix(rule)) + std::string(digits, static_cast<std::size_t>(length));
+        return std::string(ideograph_prefix(rule)) + canonical_hex(static_cast<unsigned>(cp));
     }
     }
     return {};
@@ -226,6 +231,11 @@ void find_ideograph(const std::vector<std::string_view> &words, std::vector<char
     unsigned value = 0;
     const auto [end, ec] = std::from_chars(hex.data(), hex.data() + hex.size(), value, 16);
     if (ec != std::errc{} || end != hex.data() + hex.size()) {
+        return;
+    }
+    // Only the canonical rendering is a name: uppercase digits, at least 4,
+    // no extra leading zeros.
+    if (hex != canonical_hex(value)) {
         return;
     }
     const struct tbl::Range *const range = find_range(static_cast<char32_t>(value));
@@ -366,7 +376,7 @@ std::vector<char32_t> search(const std::string_view query) {
         std::size_t words = 0;
         char32_t cp = 0;
     };
-    std::vector<Candidate> candidates;
+    std::vector<struct Candidate> candidates;
     std::vector<std::string_view> label_words;
     for_each_label([&](const char32_t cp, const std::string_view label) {
         split_words(label, label_words);
@@ -392,13 +402,13 @@ std::vector<char32_t> search(const std::string_view query) {
     });
 
     // Keep the best label of each code point, then order by rank.
-    std::ranges::sort(candidates, [](const Candidate &a, const Candidate &b) {
+    std::ranges::sort(candidates, [](const struct Candidate &a, const struct Candidate &b) {
         return std::tie(a.cp, a.tier, a.words) < std::tie(b.cp, b.tier, b.words);
     });
     const auto duplicates =
-        std::ranges::unique(candidates, [](const Candidate &a, const Candidate &b) { return a.cp == b.cp; });
+        std::ranges::unique(candidates, [](const struct Candidate &a, const struct Candidate &b) { return a.cp == b.cp; });
     candidates.erase(duplicates.begin(), duplicates.end());
-    std::ranges::sort(candidates, [](const Candidate &a, const Candidate &b) {
+    std::ranges::sort(candidates, [](const struct Candidate &a, const struct Candidate &b) {
         return std::tie(a.tier, a.words, a.cp) < std::tie(b.tier, b.words, b.cp);
     });
 
