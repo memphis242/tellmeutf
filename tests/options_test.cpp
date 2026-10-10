@@ -59,6 +59,18 @@ int main() {
     CHECK(ok({"--exact", "x"}).options.exact_only);
     CHECK(ok({"-se", "x"}).options.exact_only && ok({"-se", "x"}).options.context == 0);
     CHECK(fails({"--exact=1", "x"}));
+
+    // Semantic search reads its arguments as a description and cannot be combined with --exact.
+    CHECK(!ok({"x"}).options.semantic);
+    CHECK(ok({"-S", "x"}).options.semantic && ok({"-S", "x"}).options.force_name);
+    CHECK(ok({"--semantic", "sad", "face"}).options.semantic);
+    CHECK(fails({"--semantic=1", "x"}));
+    CHECK(ok({"-Ss", "x"}).options.semantic && ok({"-Ss", "x"}).options.context == 0);
+    CHECK(ok({"-sS", "x"}).options.semantic && ok({"-sS", "x"}).options.context == 0);
+    CHECK(ok({"-S", "-m", "3", "x"}).options.max_candidates == 3);
+    CHECK(fails({"-S", "-e", "x"}));
+    CHECK(fails({"-eS", "x"}));
+    CHECK(fails({"x", "--exact", "--semantic"}));
     CHECK(ok({"-m", "3", "x"}).options.max_candidates == 3);
     CHECK(ok({"-m3", "x"}).options.max_candidates == 3);
     CHECK(ok({"--max=100000", "x"}).options.max_candidates == 100000);

@@ -81,6 +81,7 @@ Bare hex digits are always read as a number: `tellmeutf face` shows U+FACE. Use
 -n, --name          read the arguments as a name, even if they look like hex
 -m N, --max=N       candidates to list for an ambiguous name (default 20)
 -e, --exact         match names strictly; no approximate fallback for typos
+-S, --semantic      find characters by the meaning of a description (optional, see below)
 -h, --help          usage
 -V, --version       print the version
 --                  end of options
@@ -100,10 +101,65 @@ written to a pipe or file.
 | 2 | usage error (bad option, invalid UTF-8, code point out of range, ...) |
 | 3 | a name was ambiguous, or only approximate matches were found and none stood out |
 | 4 | could not write the output |
+| 5 | semantic search is unavailable (not built in, model files missing, index cache problem) |
 
 Malformed arguments are rejected before any lookup runs. Lookups that merely
 find nothing or are ambiguous do not stop the others; the status is that of the
 first one that failed.
+
+## Optional: semantic search
+
+`-S` (`--semantic`) finds characters by what a description means, instead of
+matching the words of their names. It is meant for paraphrases that name
+matching cannot reach: `degrees` finds DEGREE SIGN, `sad face` finds the
+crying and disappointed faces, `music note` finds the musical notes. It uses a
+small sentence-embedding model (all-MiniLM-L6-v2, 8-bit) that runs locally on
+the CPU; nothing leaves the machine.
+
+It replaces name matching for that run, so use the default mode for exact names.
+It is weak where the answer needs outside knowledge (`tick` for CHECK MARK,
+`love` for a heart) and for ASCII punctuation by its common name (`pipe`,
+`backslash`); the default name matching does better there. In ranked lists
+similar names crowd each other (BLACK and WHITE variants).
+
+To enable it, download the model and ONNX Runtime once, then build with the
+option on:
+
+```
+scripts/fetch-semantic.sh
+cmake -S . -B build -DTELLMEUTF_SEMANTIC=ON
+```
+
+The script prints the exact `cmake` flags; add `-DONNXRUNTIME_ROOT=<dir>/onnxruntime`
+when you passed it a directory other than the default. It verifies every
+download against pinned SHA-256 checksums (about 35 MB in all). The files live in
+`${XDG_DATA_HOME:-$HOME/.local/share}/tellmeutf/semantic` and the index is cached
+in `${XDG_CACHE_HOME:-$HOME/.cache}/tellmeutf/semantic-index.bin`. The first use
+builds that index (about 55 MB, around 8 seconds) and says so on stderr; it is
+rebuilt automatically when the data changes. Set `TELLMEUTF_SEMANTIC_DIR` to use
+another directory for the model files.
+
+All arguments are joined into one description. The best matches are listed with
+their cosine similarity (0 to 1, higher is closer) in front, up to `--max` rows;
+matches below 0.30 are dropped. `-s` shows only the best match. `-C` has no
+effect here, and `-e` cannot be combined with `-S`.
+
+```
+$ tellmeutf -S -m 5 sad face
+0.66  0x0001F622  U+1F622  😢  CRYING FACE
+0.64  0x0001F61E  U+1F61E  😞  DISAPPOINTED FACE
+0.60  0x0001F620  U+1F620  😠  ANGRY FACE
+0.60  0x0001F979  U+1F979  🥹  FACE HOLDING BACK TEARS
+0.58  0x0001F972  U+1F972  🥲  SMILING FACE WITH TEAR
+
+$ tellmeutf -S -s degrees
+0.68  0x000000B0  U+00B0  °   DEGREE SIGN
+```
+
+The scores are not probabilities: judge a result by the gap between rows. A
+description that is close to nothing prints a message and exits with status 1;
+a build without the feature, missing model files or an unusable cache exit with
+status 5 and say what to do.
 
 ## Building
 

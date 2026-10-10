@@ -192,6 +192,64 @@ Width in cells is 2 when the code point is East Asian Wide or Fullwidth
 - Approximate list: when only approximate matches exist and none stands out,
   exit status 3 (see "Approximate fallback").
 
+### Semantic search
+
+An optional, opt-in mode: `-S, --semantic` finds characters by the meaning of a
+free-text description, for paraphrases that name matching cannot reach. It
+replaces the lexical path for that run (no exact, word-prefix or approximate
+matching), implies `--name` (all arguments are joined into one description, hex-looking words
+are not numbers), and cannot be combined with `-e/--exact` (usage error, status 2).
+
+Design:
+
+- Model: all-MiniLM-L6-v2, the 8-bit dynamically quantized ONNX export
+  (`model_quint8_avx2.onnx`, 23 MB), run with ONNX Runtime on the CPU. Tokens
+  come from a BERT-uncased WordPiece tokenizer (`src/wordpiece.cpp`, vocabulary
+  vendored in `data/semantic/`); a sentence vector is the mean of the token
+  vectors over the attention mask, scaled to unit length. Queries get no prefix.
+- Corpus: `ucd::descriptive_labels()`, about 35.8 thousand names and aliases
+  (not the algorithmic names, nor names that only spell their own code point).
+  Each label is one row of the index.
+- Search: brute force. The index is a flat float32 matrix; the query is scored
+  against every row by dot product (cosine, since all vectors have unit
+  length), rows of one code point collapse to the best one, and the top rows
+  are kept. With 36 thousand rows of 384 floats this takes well under a
+  millisecond, so a vector database or approximate index would add a
+  dependency and a failure mode for nothing.
+- Index: built on first use (about 8 s) into
+  `${XDG_CACHE_HOME:-$HOME/.cache}/tellmeutf/semantic-index.bin`, written
+  atomically and read back with a read-only mmap. The header records the format
+  version, vector size, row count, model and vocabulary file sizes, a hash of
+  the labels and the Unicode version; any mismatch, damage or truncation
+  triggers a rebuild with a message on stderr, never a crash. The model files
+  live in `${XDG_DATA_HOME:-$HOME/.local/share}/tellmeutf/semantic` (override:
+  `TELLMEUTF_SEMANTIC_DIR`), installed by `scripts/fetch-semantic.sh`.
+- Build: `-DTELLMEUTF_SEMANTIC=ON` links ONNX Runtime found under
+  `ONNXRUNTIME_ROOT`. Without it a stub with the same interface
+  (`src/semantic.hpp`) reports that the feature is not built in.
+
+Output: a ranked list, best first, at most `--max` rows, in the candidate row
+format with the cosine similarity (two decimals) and two spaces in front of
+each row; no marker and no context window (`-C` has no effect). With `-s` (or
+`-C 0`) only the best row is printed. Rows below the similarity floor (0.30,
+`kMinSimilarity` in `src/main.cpp`) are dropped. The floor is low on purpose:
+measured on 84 queries, right best matches scored 0.54 or more and unrelated
+text anywhere from 0.35 to 0.71, so no threshold separates nonsense, and the
+user judges by the gap between rows. If nothing is left the message is
+`nothing is semantically close to '<query>'; ...` and the status is 1. Progress
+messages (such as the index build) go to stderr as `tellmeutf: <message>`.
+
+Status 5 means the feature is unavailable: not built in, model files missing,
+the cache directory or index unusable, or the model runtime failed. The message
+is the library's plain error text. Status 3 is never used for semantic results.
+
+Known limits, from the measurements: on a test set of 84 descriptions it puts an
+acceptable character in the top 5 for about 80% (a word-overlap BM25 baseline
+measured in the same spike: 65%; the tool's own name matcher was not
+measured); it fails on words that need outside knowledge ("tick", "love"), and on
+ASCII punctuation by its common name ("pipe", "backslash"); similar names
+(BLACK and WHITE variants) crowd the list.
+
 ### Options
 
 ```
@@ -200,6 +258,7 @@ Width in cells is 2 when the code point is East Asian Wide or Fullwidth
 -n, --name          read the arguments as a name, even if they look like hex
 -m N, --max=N       candidates to list for an ambiguous name (default 20)
 -e, --exact         match names strictly; no approximate fallback
+-S, --semantic      find characters by the meaning of a description (optional)
 -h, --help          usage
 -V, --version       "tellmeutf 0.1.0 (Unicode 18.0.0)"
 --                  end of options
@@ -221,6 +280,7 @@ With no arguments the usage goes to stderr and the status is 2.
 | 2 | usage error (bad option, invalid UTF-8, code point out of range, ...) |
 | 3 | a name was ambiguous, or only approximate matches stood out too little |
 | 4 | could not write the output |
+| 5 | semantic search is unavailable (not built in, model files missing, index cache problem, runtime failure) |
 
 Malformed arguments (invalid UTF-8, a bad code point, a bad option) are rejected
 before any lookup runs, so nothing is printed for the valid arguments beside
@@ -247,14 +307,25 @@ src/fuzzy.cpp           approximate name retrieval (lazy index; ucd_internal.hpp
 src/utf8.{hpp,cpp}      strict UTF-8 decode / encode
 src/query.{hpp,cpp}     argument interpretation (pure; no UCD access)
 src/options.{hpp,cpp}   command-line option parsing (pure; no globals)
-src/render.{hpp,cpp}    glyph cell and row rendering
+src/render.{hpp,cpp}    glyph cell and row rendering (rows may carry a prefix column)
+src/semantic.hpp        PUBLIC CONTRACT of the semantic search facade (exists in every build)
+src/semantic_disabled.cpp  facade stub for builds without -DTELLMEUTF_SEMANTIC=ON
+src/semantic.cpp        facade with the model: files, index cache, query (ON builds only)
+src/semantic_embedder.* ONNX Runtime session, pooling, normalization (ON builds only)
+src/semantic_index.*    vector index: brute-force search, on-disk form (no model runtime)
+src/semantic_paths.*    data and cache directory resolution
+src/wordpiece.*         BERT uncased WordPiece tokenizer (pure)
+data/semantic/          vendored model vocabulary and provenance
+scripts/fetch-semantic.sh  downloads and verifies the model and ONNX Runtime
 src/main.cpp            wiring, I/O, exit status
 tests/                  unit tests (tests/check.hpp), tests/e2e.sh
 ```
 
 Targets: `tellmeutf_ucd` (static library: ucd.cpp + generated tables),
+`tellmeutf_semantic_base` (tokenizer, index, paths), `tellmeutf_semantic` (the
+facade; the model-backed one only with `-DTELLMEUTF_SEMANTIC=ON`),
 `tellmeutf_core` (static library: utf8, query, options, render; links
-`tellmeutf_ucd`), `tellmeutf` (executable).
+`tellmeutf_ucd` and `tellmeutf_semantic`), `tellmeutf` (executable).
 
 ### Data pipeline
 

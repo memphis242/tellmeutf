@@ -293,6 +293,56 @@ if [[ -w /dev/full ]]; then
     [[ -s $err ]] || fail "/dev/full: stderr is empty"
 fi
 
+# Semantic search (-S). A build without it exits 5 and prints nothing on stdout;
+# a build with it is exercised only when the model files are installed.
+# A private cache keeps the user's real index untouched.
+export XDG_CACHE_HOME=$scratch/cache
+cmd="-S usage"
+expect_status 2 -S -e x
+expect_status 2 -S --exact x
+expect_status 2 -S
+
+run -S x
+if [[ $status -eq 5 && $(grep -c . "$err") -ge 1 ]] && grep -q TELLMEUTF_SEMANTIC "$err"; then
+    [[ ! -s $out ]] || fail "-S in a build without semantic search: stdout should be empty"
+else
+    semantic_dir=${TELLMEUTF_SEMANTIC_DIR:-${XDG_DATA_HOME:-$HOME/.local/share}/tellmeutf/semantic}
+    if [[ -f $semantic_dir/model.onnx && -f $semantic_dir/vocab.txt ]]; then
+        export TELLMEUTF_SEMANTIC_DIR=$semantic_dir
+
+        cmd="-S poop"
+        run -S poop
+        [[ $status -eq 0 ]] || fail "$cmd: status $status"
+        out_has U+1F4A9
+        [[ $(rows) -le 20 ]] || fail "$cmd: more rows than --max"
+
+        cmd="-S -s trash can"
+        run -S -s trash can
+        [[ $status -eq 0 ]] || fail "$cmd: status $status"
+        [[ $(rows) -eq 1 ]] || fail "$cmd: expected 1 row, got $(rows)"
+
+        cmd="-S -m 3 sad face"
+        run -S -m 3 sad face
+        [[ $status -eq 0 && $(rows) -le 3 && $(rows) -ge 1 ]] || fail "$cmd: status $status rows $(rows)"
+
+        cmd="-S nonsense"
+        run -S qwertyuiop zxcvbnm
+        [[ $status -eq 0 || $status -eq 1 ]] || fail "$cmd: status $status"
+        if [[ $status -eq 1 ]]; then
+            [[ ! -s $out ]] || fail "$cmd: stdout should be empty on status 1"
+        fi
+
+        # A missing model is status 5 with a message on stderr only.
+        cmd="-S without model files"
+        TELLMEUTF_SEMANTIC_DIR=$scratch/no-such-dir "$bin" -S poop >"$out" 2>"$err" </dev/null
+        status=$?
+        [[ $status -eq 5 && ! -s $out && -s $err ]] || fail "$cmd: status $status"
+    else
+        echo "e2e: semantic search checks skipped (no model files in $semantic_dir)"
+    fi
+fi
+cmd=
+
 if [[ $failures -ne 0 ]]; then
     echo "$failures check(s) failed" >&2
     exit 1

@@ -3,6 +3,7 @@
 #include "utf8.hpp"
 
 #include <algorithm>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -44,6 +45,25 @@ std::vector<ucd::CharInfo> neighborhood() {
 
 int main() {
     using ucd::Category;
+
+    // Row prefixes come before every row; without them the output is unchanged.
+    {
+        const std::vector<ucd::CharInfo> rows = neighborhood();
+        const std::string plain = render::render_block(rows, std::nullopt, {});
+        CHECK(render::render_block(rows, std::nullopt, {}, {}) == plain);
+        const std::vector<std::string> prefixes{"0.91  ", "0.80  ", "0.79  ", "0.60  ", "0.51  "};
+        const std::string prefixed = render::render_block(rows, std::nullopt, {}, prefixes);
+        CHECK(line_count(prefixed) == rows.size());
+        CHECK(prefixed.starts_with("0.91  "));
+        std::string expected;
+        std::size_t start = 0;
+        for (std::size_t i = 0; i < rows.size(); ++i) {
+            const std::size_t end = plain.find('\n', start);
+            expected += prefixes[i] + plain.substr(start, end - start + 1);
+            start = end + 1;
+        }
+        CHECK(prefixed == expected);
+    }
 
     // Glyph cell: the character itself for printable categories.
     for (const Category category :

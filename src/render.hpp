@@ -28,4 +28,11 @@ struct BlockStyle {
 [[nodiscard]] std::string render_block(const std::vector<ucd::CharInfo> &rows,
                                        std::optional<std::size_t> target, const struct BlockStyle &style);
 
+// Same, with `row_prefixes[i]` written before row i (before the marker column
+// too). `row_prefixes` is empty (no prefixes) or has one entry per row; the
+// caller pads the prefixes to a common width.
+[[nodiscard]] std::string render_block(const std::vector<ucd::CharInfo> &rows,
+                                       std::optional<std::size_t> target, const struct BlockStyle &style,
+                                       const std::vector<std::string> &row_prefixes);
+
 }  // namespace tellmeutf::render

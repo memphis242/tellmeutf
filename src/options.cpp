@@ -27,6 +27,9 @@ constexpr std::string_view kUsage =
     "  -n, --name           read the arguments as a name, even if they look like hex\n"
     "  -m N, --max=N        candidates to list for an ambiguous name (default 20)\n"
     "  -e, --exact          match names strictly; no approximate fallback for typos\n"
+    "  -S, --semantic       find characters by the meaning of a description (optional\n"
+    "                       feature, see the README); lists the best matches with their\n"
+    "                       similarity; -s shows only the best one; -C has no other effect\n"
     "  -h, --help           show this help\n"
     "  -V, --version        show the version\n"
     "  --                   end of options\n"
@@ -43,10 +46,11 @@ constexpr std::string_view kUsage =
     "otherwise the closest matches are listed. --exact turns this off.\n"
     "\n"
     "Exit status: 0 success, 1 name not found, 2 usage error, 3 ambiguous name\n"
-    "(or only approximate matches), 4 could not write the output.\n";
+    "(or only approximate matches), 4 could not write the output, 5 semantic search\n"
+    "unavailable.\n";
 
 // Options that can be written in short or long form.
-enum class Opt { Context, Single, Name, Max, Exact, Help, Version };
+enum class Opt { Context, Single, Name, Max, Exact, Semantic, Help, Version };
 
 struct OptionSpec {
     Opt opt;
@@ -60,6 +64,7 @@ std::optional<OptionSpec> short_spec(const char c) {
     case 'n': return OptionSpec{Opt::Name, false};
     case 'm': return OptionSpec{Opt::Max, true};
     case 'e': return OptionSpec{Opt::Exact, false};
+    case 'S': return OptionSpec{Opt::Semantic, false};
     case 'h': return OptionSpec{Opt::Help, false};
     case 'V': return OptionSpec{Opt::Version, false};
     default: return std::nullopt;
@@ -72,6 +77,7 @@ std::optional<OptionSpec> long_spec(const std::string_view name) {
     if (name == "name") return OptionSpec{Opt::Name, false};
     if (name == "max") return OptionSpec{Opt::Max, true};
     if (name == "exact") return OptionSpec{Opt::Exact, false};
+    if (name == "semantic") return OptionSpec{Opt::Semantic, false};
     if (name == "help") return OptionSpec{Opt::Help, false};
     if (name == "version") return OptionSpec{Opt::Version, false};
     return std::nullopt;
@@ -125,6 +131,10 @@ public:
                 return std::move(result_);
             }
         }
+        if (result_.options.semantic && result_.options.exact_only) {
+            return std::unexpected(error("--semantic and --exact cannot be combined: --exact turns off approximate name "
+                                         "matching, and --semantic does not match names; use one of them"));
+        }
         if (result_.arguments.empty()) {
             return std::unexpected(UsageError{
                 .message = "no character, code point or name given; pass at least one", .show_usage = true});
@@ -159,6 +169,10 @@ private:
             return false;
         case Opt::Exact:
             result_.options.exact_only = true;
+            return false;
+        case Opt::Semantic:
+            result_.options.semantic = true;
+            result_.options.force_name = true;
             return false;
         case Opt::Help:
             result_.action = Action::Help;

@@ -2,6 +2,7 @@
 #include "options.hpp"
 #include "query.hpp"
 #include "render.hpp"
+#include "semantic.hpp"
 #include "ucd.hpp"
 #include "utf8.hpp"
 
@@ -33,6 +34,7 @@ enum ExitStatus : int {
     kUsage = 2,
     kAmbiguous = 3,
     kWriteFailed = 4,
+    kSemanticUnavailable = 5,
 };
 
 void report(const std::string_view message) {
@@ -199,6 +201,52 @@ int resolve_name(Output &out, const std::string &name, const struct tellmeutf::o
     return kAmbiguous;
 }
 
+// Matches below this cosine similarity are not shown. The floor only removes
+// the weak tail of a ranking. Spike measurements with all-MiniLM-L6-v2: when
+// the best match was right (56 of 84 queries) it scored 0.54 or more, 0.67 at
+// the 10th percentile. Unrelated text peaked anywhere from 0.35 ("how do i
+// install linux") to 0.71 ("pizza recipe", which does find a pizza), so no
+// floor separates nonsense cleanly. Right answers that need outside knowledge
+// ("tick" 0.37, "love" 0.32) sit just above 0.30, and a few hopeless queries
+// ("mac command key" 0.07) fall below it.
+constexpr float kMinSimilarity = 0.30f;
+
+// Semantic lookup of a free-text description: a ranked list with the
+// similarity before each row. Returns the exit status.
+int resolve_semantic(Output &out, const std::string &description, const struct tellmeutf::options::Options &options) {
+    // -s (context 0) asks for the best match only; other context values do not apply.
+    const std::size_t limit = options.context == 0 ? 1 : options.max_candidates;
+    const auto notify = [](const std::string_view message) {
+        report(message);
+        std::fflush(stderr);
+    };
+    const auto result = tellmeutf::semantic::search(description, limit, notify);
+    if (!result) {
+        report(result.error().message);
+        return kSemanticUnavailable;
+    }
+
+    std::vector<char32_t> code_points;
+    std::vector<std::string> prefixes;
+    for (const struct tellmeutf::semantic::Match &match : *result) {
+        if (match.score < kMinSimilarity) {
+            break;  // best first, so everything after is lower too
+        }
+        std::array<char, 32> buffer{};
+        const int length = std::snprintf(buffer.data(), buffer.size(), "%.2f  ", static_cast<double>(match.score));
+        assert(length > 0 && static_cast<std::size_t>(length) < buffer.size());
+        prefixes.emplace_back(buffer.data(), static_cast<std::size_t>(length));
+        code_points.push_back(match.cp);
+    }
+    if (code_points.empty()) {
+        report("nothing is semantically close to '" + tellmeutf::utf8::escape_for_message(description) +
+               "'; try different words, or drop -S for name matching.");
+        return kNotFound;
+    }
+    out.write_block(tellmeutf::render::render_block(candidate_rows(code_points, code_points.size()), std::nullopt, {}, prefixes));
+    return kOk;
+}
+
 int run(const std::vector<std::string> &args) {
     const auto parsed = tellmeutf::options::parse(args);
     if (!parsed) {
@@ -232,6 +280,14 @@ int run(const std::vector<std::string> &args) {
                 break;
             }
             int lookup_status = kOk;
+            if (parsed->options.semantic) {
+                assert(lookup.kind == tellmeutf::query::Lookup::Kind::Name);
+                lookup_status = resolve_semantic(out, lookup.name, parsed->options);
+                if (status == kOk) {
+                    status = lookup_status;
+                }
+                continue;
+            }
             switch (lookup.kind) {
             case tellmeutf::query::Lookup::Kind::CodePoint:
                 show_window(out, lookup.code_point, parsed->options);

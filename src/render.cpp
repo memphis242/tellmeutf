@@ -107,7 +107,13 @@ std::string glyph_cell(const struct ucd::CharInfo &info) {
 
 std::string render_block(const std::vector<ucd::CharInfo> &rows, const std::optional<std::size_t> target,
                          const struct BlockStyle &style) {
+    return render_block(rows, target, style, {});
+}
+
+std::string render_block(const std::vector<ucd::CharInfo> &rows, const std::optional<std::size_t> target,
+                         const struct BlockStyle &style, const std::vector<std::string> &row_prefixes) {
     assert(!target || *target < rows.size());
+    assert(row_prefixes.empty() || row_prefixes.size() == rows.size());
     std::size_t code_point_width = 0;
     for (const struct ucd::CharInfo &info : rows) {
         code_point_width = std::max(code_point_width, code_point_cell(info.cp, 0).size());
@@ -119,6 +125,9 @@ std::string render_block(const std::vector<ucd::CharInfo> &rows, const std::opti
         const bool bold = is_target && style.bold_target;
         if (bold) {
             out += kBoldOn;
+        }
+        if (!row_prefixes.empty()) {
+            out += row_prefixes[i];
         }
         out += render_row(rows[i], style.marker_column, is_target, code_point_width);
         if (bold) {

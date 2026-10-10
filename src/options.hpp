@@ -21,6 +21,7 @@ struct Options {
     std::uint32_t max_candidates = kDefaultMaxCandidates;
     bool force_name = false;
     bool exact_only = false;  // no approximate fallback when a name has no strict match
+    bool semantic = false;    // free-text search by meaning instead of name matching; implies force_name
 };
 
 struct CommandLine {
