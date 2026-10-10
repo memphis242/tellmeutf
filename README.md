@@ -44,6 +44,27 @@ tellmeutf: 'arrow' matches 646 characters; showing the first 2. Add more words t
 0x00002191  U+2191  ↑   UPWARDS ARROW
 ```
 
+A misspelled name still finds its character: when nothing matches strictly, the
+closest names are tried (typos, words run together or split apart, plurals,
+extra words). A clear winner is shown with a note on stderr:
+
+```
+$ tellmeutf -s snowmann
+tellmeutf: no exact match for 'snowmann'; showing the closest: SNOWMAN (U+2603). Use --exact to turn off approximate matching.
+0x00002603  U+2603  ☃   SNOWMAN
+```
+
+When no single match stands out, the closest matches are listed and the status
+is 3:
+
+```
+$ tellmeutf -m 3 arrowz
+tellmeutf: no exact match for 'arrowz'; these are the closest matches.
+0x00002192  U+2192  →   RIGHTWARDS ARROW
+0x00002190  U+2190  ←   LEFTWARDS ARROW
+0x00002193  U+2193  ↓   DOWNWARDS ARROW
+```
+
 Several arguments give several blocks. Text that holds several code points (for
 example a letter plus a combining accent) shows each one. Combining marks are
 drawn on a dotted circle, and controls and spaces show a blank glyph, so the
@@ -59,6 +80,7 @@ Bare hex digits are always read as a number: `tellmeutf face` shows U+FACE. Use
 -s, --single        show only the result (same as -C 0)
 -n, --name          read the arguments as a name, even if they look like hex
 -m N, --max=N       candidates to list for an ambiguous name (default 20)
+-e, --exact         match names strictly; no approximate fallback for typos
 -h, --help          usage
 -V, --version       print the version
 --                  end of options
@@ -74,9 +96,9 @@ written to a pipe or file.
 | status | meaning |
 |--------|---------|
 | 0 | every lookup succeeded |
-| 1 | a name matched nothing |
+| 1 | a name matched nothing, not even approximately |
 | 2 | usage error (bad option, invalid UTF-8, code point out of range, ...) |
-| 3 | a name was ambiguous |
+| 3 | a name was ambiguous, or only approximate matches were found and none stood out |
 | 4 | could not write the output |
 
 Malformed arguments are rejected before any lookup runs. Lookups that merely

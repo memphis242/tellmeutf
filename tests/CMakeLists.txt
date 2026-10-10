@@ -7,6 +7,7 @@ function(tellmeutf_unit_test name)
 endfunction()
 
 tellmeutf_unit_test(ucd_test tellmeutf_ucd)
+tellmeutf_unit_test(fuzzy_test tellmeutf_ucd)
 tellmeutf_unit_test(utf8_test tellmeutf_core)
 tellmeutf_unit_test(query_test tellmeutf_core)
 tellmeutf_unit_test(options_test tellmeutf_core)

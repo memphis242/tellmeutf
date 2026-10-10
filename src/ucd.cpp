@@ -1,6 +1,7 @@
 // Lookup and name search over the generated tables (see ucd_tables.hpp).
 #include "ucd.hpp"
 
+#include "ucd_internal.hpp"
 #include "ucd_tables.hpp"
 
 #include <algorithm>
@@ -9,6 +10,7 @@
 #include <charconv>
 #include <cstddef>
 #include <cstdio>
+#include <functional>
 #include <iterator>
 #include <string>
 #include <string_view>
@@ -43,8 +45,12 @@ namespace tbl = ::tellmeutf::ucd::tables;
     }
 }
 
+}  // namespace
+
+namespace internal {
+
 // ASCII uppercase copy; other bytes are kept as they are.
-[[nodiscard]] std::string uppercase(const std::string_view text) {
+std::string uppercase(const std::string_view text) {
     std::string result(text);
     for (char &c : result) {
         if (c >= 'a' && c <= 'z') {
@@ -79,6 +85,13 @@ void split_words(const std::string_view text, std::vector<std::string_view> &wor
         words.push_back(text.substr(word_start));
     }
 }
+
+}  // namespace internal
+
+using internal::split_words;
+using internal::uppercase;
+
+namespace {
 
 // ---------------------------------------------------------------------------
 // Tables
@@ -278,6 +291,26 @@ void for_each_label(Visit &&visit) {
 }
 
 }  // namespace
+
+namespace internal {
+
+void visit_labels(const bool include_hangul, const std::function<void(char32_t, std::string_view)> &visit) {
+    if (include_hangul) {
+        for_each_label(visit);
+        return;
+    }
+    for (const struct tbl::Entry &entry : tbl::kTables.entries) {
+        const std::string_view name = name_text(entry.name);
+        if (!name.starts_with('<')) {
+            visit(entry.cp, name);
+        }
+    }
+    for (const struct tbl::Alias &alias : tbl::kTables.aliases) {
+        visit(alias.cp, name_text(alias.name));
+    }
+}
+
+}  // namespace internal
 
 std::string_view category_code(const Category category) {
     switch (category) {

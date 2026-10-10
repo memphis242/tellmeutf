@@ -32,6 +32,7 @@ int main() {
         CHECK(cl.options.context == 2);
         CHECK(cl.options.max_candidates == 20);
         CHECK(!cl.options.force_name);
+        CHECK(!cl.options.exact_only);
         CHECK(cl.arguments == Args{"x"});
     }
 
@@ -54,6 +55,10 @@ int main() {
     CHECK(ok({"-s", "-C", "5", "x"}).options.context == 5);
     CHECK(ok({"-n", "face"}).options.force_name);
     CHECK(ok({"--name", "face"}).options.force_name);
+    CHECK(ok({"-e", "x"}).options.exact_only);
+    CHECK(ok({"--exact", "x"}).options.exact_only);
+    CHECK(ok({"-se", "x"}).options.exact_only && ok({"-se", "x"}).options.context == 0);
+    CHECK(fails({"--exact=1", "x"}));
     CHECK(ok({"-m", "3", "x"}).options.max_candidates == 3);
     CHECK(ok({"-m3", "x"}).options.max_candidates == 3);
     CHECK(ok({"--max=100000", "x"}).options.max_candidates == 100000);

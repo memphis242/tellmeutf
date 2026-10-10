@@ -35,6 +35,6 @@ add_custom_command(
   COMMENT "Generating Unicode tables"
   VERBATIM)
 
-add_library(tellmeutf_ucd STATIC ucd.cpp ${TELLMEUTF_UCD_TABLES})
+add_library(tellmeutf_ucd STATIC ucd.cpp fuzzy.cpp ${TELLMEUTF_UCD_TABLES})
 target_include_directories(tellmeutf_ucd PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(tellmeutf_ucd PRIVATE tellmeutf_options)

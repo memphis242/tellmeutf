@@ -20,6 +20,7 @@ struct Options {
     std::uint32_t context = kDefaultContext;         // rows before and after the target
     std::uint32_t max_candidates = kDefaultMaxCandidates;
     bool force_name = false;
+    bool exact_only = false;  // no approximate fallback when a name has no strict match
 };
 
 struct CommandLine {
