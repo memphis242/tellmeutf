@@ -65,8 +65,8 @@ hyphen). A hyphen anywhere else stays part of its word, which keeps
 - **Search** (only when nothing matches exactly): a code point matches if every
   query word is a prefix of some word in one of its names or aliases. Results
   are ranked best first: (1) every query word equals a whole name word, before
-  prefix-only matches; (2) shorter matching label first; (3) lower code point
-  first. A single result is treated like an exact match; several results are
+  prefix-only matches; (2) fewer words in the matching label first; (3) lower
+  code point first. A single result is treated like an exact match; several results are
   ambiguous.
 
 ### Output

@@ -125,7 +125,7 @@ void test_search() {
     // A whole-word match ranks before a prefix-only match even when its label
     // is longer and its code point higher: BOX DRAWINGS LIGHT DOUBLE DASH
     // HORIZONTAL (U+254C) before LEFTWARDS DASHED ARROW (U+21E0), and the
-    // shorter EN DASH (U+2013) before both.
+    // two-word EN DASH (U+2013) before both.
     const std::vector<char32_t> dash = ucd::search("dash");
     const auto en_dash = std::ranges::find(dash, char32_t{0x2013});
     const auto box_dash = std::ranges::find(dash, char32_t{0x254C});
@@ -133,6 +133,12 @@ void test_search() {
     CHECK(en_dash != dash.end() && box_dash != dash.end() && dashed_arrow != dash.end());
     CHECK(en_dash < box_dash);
     CHECK(box_dash < dashed_arrow);
+
+    // Among whole-word matches, fewer label words come first, then lower code
+    // point: the four basic arrows lead the results for "arrow".
+    const std::vector<char32_t> arrow = ucd::search("arrow");
+    CHECK(arrow.size() > 4);
+    CHECK(arrow.size() > 4 && arrow[0] == 0x2190 && arrow[1] == 0x2191 && arrow[2] == 0x2192 && arrow[3] == 0x2193);
 
     CHECK(contains(ucd::search("nbsp"), 0xA0));
     CHECK(contains(ucd::search("hangul syllable gag"), 0xAC01));

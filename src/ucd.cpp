@@ -359,10 +359,11 @@ std::vector<char32_t> search(const std::string_view query) {
     }
 
     // One candidate per matching label: tier 0 when every query word equals a
-    // whole word of the label, tier 1 when some are only prefixes.
+    // whole word of the label, tier 1 when some are only prefixes. Within a
+    // tier, labels with fewer words are closer to the query.
     struct Candidate {
         int tier = 0;
-        std::size_t length = 0;
+        std::size_t words = 0;
         char32_t cp = 0;
     };
     std::vector<Candidate> candidates;
@@ -387,18 +388,18 @@ std::vector<char32_t> search(const std::string_view query) {
             }
             all_whole = all_whole && whole;
         }
-        candidates.push_back(Candidate{.tier = all_whole ? 0 : 1, .length = label.size(), .cp = cp});
+        candidates.push_back(Candidate{.tier = all_whole ? 0 : 1, .words = label_words.size(), .cp = cp});
     });
 
     // Keep the best label of each code point, then order by rank.
     std::ranges::sort(candidates, [](const Candidate &a, const Candidate &b) {
-        return std::tie(a.cp, a.tier, a.length) < std::tie(b.cp, b.tier, b.length);
+        return std::tie(a.cp, a.tier, a.words) < std::tie(b.cp, b.tier, b.words);
     });
     const auto duplicates =
         std::ranges::unique(candidates, [](const Candidate &a, const Candidate &b) { return a.cp == b.cp; });
     candidates.erase(duplicates.begin(), duplicates.end());
     std::ranges::sort(candidates, [](const Candidate &a, const Candidate &b) {
-        return std::tie(a.tier, a.length, a.cp) < std::tie(b.tier, b.length, b.cp);
+        return std::tie(a.tier, a.words, a.cp) < std::tie(b.tier, b.words, b.cp);
     });
 
     std::vector<char32_t> result;

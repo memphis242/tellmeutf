@@ -38,8 +38,8 @@ A name with several matches lists candidates and exits with status 3:
 ```
 $ tellmeutf -m 2 arrow
 tellmeutf: 'arrow' matches 646 characters; showing the first 2. Add more words to narrow it down, or raise --max to list more.
+0x00002190  U+2190  ←   LEFTWARDS ARROW
 0x00002191  U+2191  ↑   UPWARDS ARROW
-0x00002195  U+2195  ↕   UP DOWN ARROW
 ```
 
 Several arguments give several blocks. Text that holds several code points (for
