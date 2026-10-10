@@ -153,10 +153,11 @@ run $'\xe2\x9d'
 [[ $status -eq 2 ]] || fail "truncated sequence: status $status, wanted 2"
 run $'\xc0\x80'
 [[ $status -eq 2 ]] || fail "overlong form: status $status, wanted 2"
-# One bad lookup among good ones: all are attempted and the first failure's status wins.
+# Malformed arguments are rejected before any lookup runs, so valid ones beside them print nothing.
 cmd="U+41 U+110000"
 run U+41 U+110000
 [[ $status -eq 2 ]] || fail "$cmd: status $status, wanted 2"
+[[ ! -s $out ]] || fail "$cmd: stdout should be empty"
 
 # A name that matches nothing: status 1, message on stderr.
 cmd="nonsense name"
@@ -164,6 +165,19 @@ run qzxjv nonsensename
 [[ $status -eq 1 ]] || fail "$cmd: status $status, wanted 1"
 err_has_text
 [[ ! -s $out ]] || fail "$cmd: stdout should be empty"
+
+# Echoed user text is escaped: an ESC byte in a name never reaches stderr.
+cmd="ESC in name"
+run $'qzxjv\x1b[2Jnope'
+[[ $status -eq 1 ]] || fail "$cmd: status $status, wanted 1"
+if [[ $(LC_ALL=C tr -cd '\033' <"$err" | wc -c) -ne 0 ]]; then
+    fail "$cmd: escape byte found on stderr"
+fi
+run -$'\x1b'
+[[ $status -eq 2 ]] || fail "ESC option: status $status, wanted 2"
+if [[ $(LC_ALL=C tr -cd '\033' <"$err" | wc -c) -ne 0 ]]; then
+    fail "ESC option: escape byte found on stderr"
+fi
 
 # An ambiguous word: candidate rows on stdout, a note on stderr, status 3.
 cmd="arrow"

@@ -3,6 +3,7 @@
 #include "query.hpp"
 #include "render.hpp"
 #include "ucd.hpp"
+#include "utf8.hpp"
 
 #include <unistd.h>
 
@@ -45,12 +46,17 @@ bool stdout_supports_bold() {
     return term != nullptr && *term != '\0' && std::strcmp(term, "dumb") != 0;
 }
 
-// Writes stdout; remembers whether any write failed.
+// Writes stdout; remembers whether any write failed. SIGPIPE keeps its default
+// action, so a reader that closes the pipe early (for example `| head -1`)
+// ends the process quietly instead of reaching the write-failure report.
 class Output {
 public:
     explicit Output(const bool bold) : bold_(bold) {}
 
     [[nodiscard]] bool bold() const { return bold_; }
+
+    // True once a write has failed; later writes are skipped.
+    [[nodiscard]] bool failed() const { return failed_; }
 
     // Writes one block, preceded by a blank line when it is not the first.
     void write_block(const std::string &block) {
@@ -103,7 +109,10 @@ std::vector<ucd::CharInfo> window_around(const char32_t target, const std::uint3
     return rows;
 }
 
-void show_window(Output &out, const char32_t target, const tellmeutf::options::Options &options) {
+void show_window(Output &out, const char32_t target, const struct tellmeutf::options::Options &options) {
+    if (out.failed()) {
+        return;
+    }
     const std::vector<ucd::CharInfo> rows = window_around(target, options.context);
     const struct tellmeutf::render::BlockStyle style {
         .marker_column = options.context > 0,
@@ -114,13 +123,13 @@ void show_window(Output &out, const char32_t target, const tellmeutf::options::O
 }
 
 // Resolves a name lookup. Returns the exit status of this lookup.
-int resolve_name(Output &out, const std::string &name, const tellmeutf::options::Options &options) {
+int resolve_name(Output &out, const std::string &name, const struct tellmeutf::options::Options &options) {
     std::vector<char32_t> matches = ucd::find_exact(name);
     if (matches.empty()) {
         matches = ucd::search(name);
     }
     if (matches.empty()) {
-        report("no character matches '" + name + "'; try fewer or shorter words, or give a code point such as U+276F");
+        report("no character matches '" + tellmeutf::utf8::escape_for_message(name) + "'; try fewer or shorter words, or give a code point such as U+276F");
         return kNotFound;
     }
     if (matches.size() == 1) {
@@ -135,7 +144,7 @@ int resolve_name(Output &out, const std::string &name, const tellmeutf::options:
         rows.push_back(ucd::lookup(matches[i]));
     }
     out.write_block(tellmeutf::render::render_block(rows, std::nullopt, {}));
-    std::string note = "'" + name + "' matches " + std::to_string(matches.size()) + " characters";
+    std::string note = "'" + tellmeutf::utf8::escape_for_message(name) + "' matches " + std::to_string(matches.size()) + " characters";
     note += shown < matches.size() ? "; showing the first " + std::to_string(shown) : std::string("; showing all");
     note += ". Add more words to narrow it down";
     if (shown < matches.size()) {
@@ -174,7 +183,10 @@ int run(const std::vector<std::string> &args) {
         }
         Output out(stdout_supports_bold());
         int status = kOk;
-        for (const tellmeutf::query::Lookup &lookup : *lookups) {
+        for (const struct tellmeutf::query::Lookup &lookup : *lookups) {
+            if (out.failed()) {
+                break;
+            }
             int lookup_status = kOk;
             switch (lookup.kind) {
             case tellmeutf::query::Lookup::Kind::CodePoint:
@@ -205,7 +217,7 @@ int run(const std::vector<std::string> &args) {
 }  // namespace
 
 int main(const int argc, const char *const *const argv) {
-    assert(argc >= 1);
-    const std::vector<std::string> args(argv + 1, argv + argc);
+    const std::vector<std::string> args =
+        argc > 1 ? std::vector<std::string>(argv + 1, argv + argc) : std::vector<std::string>{};
     return run(args);
 }

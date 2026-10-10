@@ -24,7 +24,7 @@ struct Options {
 
 struct CommandLine {
     Action action = Action::Lookup;
-    Options options;
+    struct Options options;
     // Positional arguments in order (empty for Help and Version).
     std::vector<std::string> arguments;
 };

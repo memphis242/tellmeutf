@@ -21,7 +21,7 @@ struct BlockStyle {
 // cells: the character itself for most categories, a dotted circle followed by
 // the character for combining marks, and a single space for separators,
 // controls, format characters, surrogates and unassigned code points.
-[[nodiscard]] std::string glyph_cell(const ucd::CharInfo &info);
+[[nodiscard]] std::string glyph_cell(const struct ucd::CharInfo &info);
 
 // One line per element of `rows`, each ending in a newline. `target`, when
 // present, is the index of the row to mark and (per `style`) emphasize.

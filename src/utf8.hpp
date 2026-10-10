@@ -20,6 +20,12 @@ struct DecodeError {
 // forms, surrogates, values above U+10FFFF and truncated sequences.
 [[nodiscard]] std::expected<std::vector<char32_t>, DecodeError> decode(std::string_view text);
 
+// `text` made safe to print inside a message: ASCII control bytes (0x00-0x1F,
+// 0x7F) and bytes that are not valid UTF-8 become \xNN; C1 controls and the
+// bidirectional formatting characters (U+061C, U+200E, U+200F, U+202A to
+// U+202E, U+2066 to U+2069) become \u{XXXX}. Other valid UTF-8 passes through.
+[[nodiscard]] std::string escape_for_message(std::string_view text);
+
 // Appends the UTF-8 form of `cp`. Precondition: `cp` is a Unicode scalar value
 // (at most U+10FFFF and not a surrogate).
 void append(std::string &out, char32_t cp);

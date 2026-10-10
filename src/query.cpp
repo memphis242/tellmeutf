@@ -82,13 +82,13 @@ std::expected<char32_t, QueryError> parse_code_point(const std::string_view arg,
                                                      const bool prefixed) {
     if (prefixed && (digits.empty() || digits.size() > kMaxPrefixedDigits || !all_hex_digits(digits))) {
         return std::unexpected(QueryError{
-            "'" + std::string(arg) + "' has a code point prefix but is not followed by 1 to 8 hex digits; "
+            "'" + utf8::escape_for_message(arg) + "' has a code point prefix but is not followed by 1 to 8 hex digits; "
             "write for example U+276F, or use --name to look it up as a name"});
     }
     const char32_t cp = hex_to_code_point(digits);
     if (cp > kLastCodePoint) {
         return std::unexpected(QueryError{
-            "'" + std::string(arg) + "' is above U+10FFFF, the last Unicode code point; use a smaller value"});
+            "'" + utf8::escape_for_message(arg) + "' is above U+10FFFF, the last Unicode code point; use a smaller value"});
     }
     return cp;
 }

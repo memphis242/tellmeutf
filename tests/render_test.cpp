@@ -79,7 +79,7 @@ int main() {
             const std::string block = render::render_block(rows, 2, {.marker_column = marker, .bold_target = bold});
             CHECK(line_count(block) == rows.size());
             CHECK(!block.empty() && block.back() == '\n');
-            for (const ucd::CharInfo &row : rows) {
+            for (const struct ucd::CharInfo &row : rows) {
                 CHECK(contains(block, row.name));
             }
             CHECK(contains(block, "0x0000276F"));

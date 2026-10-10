@@ -91,8 +91,10 @@ Columns, separated by two spaces:
 4. The glyph cell, padded on the right to 2 terminal cells (see Glyph cell).
 5. The name.
 
-The target row is bold when stdout is a terminal (and `TERM` is not `dumb`);
-no escape sequences are ever written to a pipe or file. All output is UTF-8
+When context rows are shown (context greater than 0), the target row is bold if
+stdout is a terminal (and `TERM` is not `dumb`). Single-result output (`-s`,
+`-C 0`) has no marker and no bold. No escape sequences are ever written to a
+pipe or file. All output is UTF-8
 regardless of locale.
 
 The context window is the numerically adjacent code points, clipped at U+0000
@@ -152,11 +154,18 @@ With no arguments the usage goes to stderr and the status is 2.
 | 3 | a name was ambiguous |
 | 4 | could not write the output |
 
-When several lookups run, all are attempted and the status is that of the first
-failing one. A write failure on stdout stops the run with status 4.
+Malformed arguments (invalid UTF-8, a bad code point, a bad option) are rejected
+before any lookup runs, so nothing is printed for the valid arguments beside
+them. Lookups that merely find nothing or are ambiguous do not stop the others:
+all are attempted and the status is that of the first one that failed. A write
+failure on stdout stops the run with status 4. SIGPIPE keeps its default
+action, so a reader that closes the pipe early (`| head -1`) ends the process
+quietly.
 
 Error messages go to stderr, start with `tellmeutf: `, say what went wrong and
-what to do about it, and never apologize.
+what to do about it, and never apologize. Text from the command line that a
+message echoes is escaped: control bytes, bytes that are not valid UTF-8 and
+bidirectional formatting characters appear as `\xNN` or `\u{XXXX}`.
 
 ## Architecture
 

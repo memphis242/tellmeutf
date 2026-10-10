@@ -69,7 +69,7 @@ std::string code_point_cell(const char32_t cp, const std::size_t width) {
     return cell;
 }
 
-std::string render_row(const ucd::CharInfo &info, const bool marker_column, const bool is_target,
+std::string render_row(const struct ucd::CharInfo &info, const bool marker_column, const bool is_target,
                        const std::size_t code_point_width) {
     std::string row;
     if (marker_column) {
@@ -84,7 +84,7 @@ std::string render_row(const ucd::CharInfo &info, const bool marker_column, cons
 
 }  // namespace
 
-std::string glyph_cell(const ucd::CharInfo &info) {
+std::string glyph_cell(const struct ucd::CharInfo &info) {
     std::string cell;
     int cells = 1;
     switch (glyph_kind(info.category)) {
@@ -109,7 +109,7 @@ std::string render_block(const std::vector<ucd::CharInfo> &rows, const std::opti
                          const struct BlockStyle &style) {
     assert(!target || *target < rows.size());
     std::size_t code_point_width = 0;
-    for (const ucd::CharInfo &info : rows) {
+    for (const struct ucd::CharInfo &info : rows) {
         code_point_width = std::max(code_point_width, code_point_cell(info.cp, 0).size());
     }
 

@@ -17,7 +17,9 @@ $ tellmeutf ❯
   0x00002771  U+2771  ❱   HEAVY RIGHT-POINTING ANGLE BRACKET ORNAMENT
 ```
 
-A code point (`U+276F`, `0x276f`, `\u276f` and bare `276f` all work):
+A code point (`U+276F`, `0x276f`, `\u276f` and bare `276f` all work; quote the
+backslash form in a shell, as in `'\u276f'`, because the shell would otherwise
+strip the backslash):
 
 ```
 $ tellmeutf -C 1 U+00E9
@@ -62,8 +64,10 @@ Bare hex digits are always read as a number: `tellmeutf face` shows U+FACE. Use
 --                  end of options
 ```
 
-Options may come before or after the arguments. On a terminal the target row is
-bold; nothing but plain UTF-8 text is written to a pipe or file.
+Options may come before or after the arguments. When context rows are shown
+(context greater than 0) the target row is marked with `>` and, on a terminal,
+bold; single-result output (`-s`) is plain. Nothing but plain UTF-8 text is
+written to a pipe or file.
 
 ## Exit status
 
@@ -75,8 +79,9 @@ bold; nothing but plain UTF-8 text is written to a pipe or file.
 | 3 | a name was ambiguous |
 | 4 | could not write the output |
 
-With several lookups, all are attempted and the status is that of the first one
-that failed.
+Malformed arguments are rejected before any lookup runs. Lookups that merely
+find nothing or are ambiguous do not stop the others; the status is that of the
+first one that failed.
 
 ## Building
 

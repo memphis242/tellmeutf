@@ -17,7 +17,7 @@ std::vector<char32_t> code_points(const Args &args, const bool force_name = fals
     CHECK(result.has_value());
     std::vector<char32_t> out;
     if (result) {
-        for (const query::Lookup &lookup : *result) {
+        for (const struct query::Lookup &lookup : *result) {
             CHECK(lookup.kind == query::Lookup::Kind::CodePoint);
             out.push_back(lookup.code_point);
         }

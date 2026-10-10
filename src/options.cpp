@@ -1,5 +1,7 @@
 #include "options.hpp"
 
+#include "utf8.hpp"
+
 #include <cstddef>
 #include <optional>
 #include <utility>
@@ -76,7 +78,7 @@ std::expected<std::uint32_t, UsageError> parse_number(const std::string_view opt
     const std::string range = std::to_string(min) + " to " + std::to_string(max);
     const auto bad = [&] {
         return std::unexpected(error("option " + std::string(option) + " needs a whole number from " + range +
-                                     ", not '" + std::string(text) + "'"));
+                                     ", not '" + utf8::escape_for_message(text) + "'"));
     };
     if (text.empty()) {
         return bad();
@@ -128,7 +130,7 @@ private:
     using Outcome = std::expected<bool, UsageError>;
 
     // Applies one option; `value` is its argument when it takes one.
-    Outcome apply(const std::string_view shown, const OptionSpec spec, const std::string_view value) {
+    Outcome apply(const std::string_view shown, const struct OptionSpec spec, const std::string_view value) {
         switch (spec.opt) {
         case Opt::Context: {
             const auto n = parse_number(shown, value, 0, kMaxContext);
@@ -174,7 +176,7 @@ private:
         const std::string_view name = body.substr(0, equals);
         const auto spec = long_spec(name);
         if (!spec) {
-            return std::unexpected(error("unknown option '--" + std::string(name) + "'; see --help for the options"));
+            return std::unexpected(error("unknown option '--" + utf8::escape_for_message(name) + "'; see --help for the options"));
         }
         const std::string shown = "--" + std::string(name);
         if (!spec->takes_value) {
@@ -195,11 +197,12 @@ private:
     Outcome parse_short_cluster(const std::string &arg) {
         for (std::size_t i = 1; i < arg.size(); ++i) {
             const auto spec = short_spec(arg[i]);
-            const std::string shown = std::string("-") + arg[i];
             if (!spec) {
-                return std::unexpected(error("unknown option '" + shown + "'; see --help for the options, "
+                const std::string unknown = "-" + utf8::escape_for_message(std::string_view(arg).substr(i));
+                return std::unexpected(error("unknown option '" + unknown + "'; see --help for the options, "
                                              "or put -- before an argument that starts with a dash"));
             }
+            const std::string shown = std::string("-") + arg[i];
             if (!spec->takes_value) {
                 const auto outcome = apply(shown, *spec, {});
                 if (!outcome || *outcome) return outcome;
@@ -217,7 +220,7 @@ private:
 
     const std::vector<std::string> &args_;
     std::size_t index_ = 0;
-    CommandLine result_;
+    struct CommandLine result_;
 };
 
 }  // namespace

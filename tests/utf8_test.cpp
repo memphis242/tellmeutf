@@ -91,5 +91,18 @@ int main() {
     check_rejected(bytes({0xE2, 'a', 0xAF}), 0);         // continuation replaced
     check_rejected(bytes({0xC2}), 0);
 
+    // Message escaping: controls, C1, bidi controls and invalid bytes are made visible.
+    CHECK(utf8::escape_for_message("plain") == "plain");
+    CHECK(utf8::escape_for_message(bytes({0x1B, '[', '2', 'J'})) == "\\x1B[2J");
+    CHECK(utf8::escape_for_message(bytes({'-', 0xC3})) == "-\\xC3");
+    CHECK(utf8::escape_for_message(bytes({0x7F, 0x00})) == "\\x7F\\x00");
+    CHECK(utf8::escape_for_message(bytes({0xE2, 0x80, 0xAE})) == "\\u{202E}");  // RLO
+    CHECK(utf8::escape_for_message(bytes({0xC2, 0x9B})) == "\\u{009B}");        // C1 CSI
+    CHECK(utf8::escape_for_message(bytes({0xFF, 'a', 0xE2, 0x9D})) == "\\xFFa\\xE2\\x9D");
+    // Valid text passes through unchanged.
+    CHECK(utf8::escape_for_message(bytes({0xE2, 0x9D, 0xAF})) == bytes({0xE2, 0x9D, 0xAF}));
+    CHECK(utf8::escape_for_message(bytes({0xF0, 0x9F, 0x98, 0x80})) == bytes({0xF0, 0x9F, 0x98, 0x80}));
+    CHECK(utf8::escape_for_message("").empty());
+
     return tellmeutf::test::finish();
 }
