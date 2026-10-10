@@ -38,6 +38,11 @@ Then:
 - Otherwise every argument (and, for Text, every code point of it) is its own
   **code point** lookup, processed in order.
 
+When the arguments are joined into a name, Text arguments must still be valid
+UTF-8, and an argument with a code point prefix must still be well formed (so
+`U+zz snowman` is a usage error); `--name` reads such arguments as plain name
+text.
+
 A code point above U+10FFFF is a usage error. Surrogates (U+D800 to U+DFFF) are
 accepted as code points and shown with the label `<surrogate>`.
 
@@ -145,9 +150,10 @@ With no arguments the usage goes to stderr and the status is 2.
 | 1 | a name matched nothing |
 | 2 | usage error (bad option, invalid UTF-8, code point out of range, ...) |
 | 3 | a name was ambiguous |
+| 4 | could not write the output |
 
 When several lookups run, all are attempted and the status is that of the first
-failing one.
+failing one. A write failure on stdout stops the run with status 4.
 
 Error messages go to stderr, start with `tellmeutf: `, say what went wrong and
 what to do about it, and never apologize.
