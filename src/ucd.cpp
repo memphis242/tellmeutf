@@ -418,6 +418,39 @@ std::vector<char32_t> search(const std::string_view query) {
     return result;
 }
 
+namespace {
+
+// True for names that only spell the code point itself, such as
+// "CJK COMPATIBILITY IDEOGRAPH-F900" or "EGYPTIAN HIEROGLYPH-13000".
+[[nodiscard]] bool is_code_point_name(const char32_t cp, const std::string_view name) {
+    const std::size_t dash = name.rfind('-');
+    if (dash == std::string_view::npos) {
+        return false;
+    }
+    const std::string_view hex = name.substr(dash + 1);
+    unsigned value = 0;
+    const auto [end, ec] = std::from_chars(hex.data(), hex.data() + hex.size(), value, 16);
+    return hex.size() >= 4 && ec == std::errc{} && end == hex.data() + hex.size() &&
+           hex == canonical_hex(value) && value == static_cast<unsigned>(cp);
+}
+
+}  // namespace
+
+std::vector<Label> descriptive_labels() {
+    std::vector<Label> labels;
+    labels.reserve(tbl::kTables.entries.size() + tbl::kTables.aliases.size());
+    for (const struct tbl::Entry &entry : tbl::kTables.entries) {
+        const std::string_view name = name_text(entry.name);
+        if (!name.starts_with('<') && !is_code_point_name(entry.cp, name)) {
+            labels.push_back(Label{.cp = entry.cp, .text = std::string(name)});
+        }
+    }
+    for (const struct tbl::Alias &alias : tbl::kTables.aliases) {
+        labels.push_back(Label{.cp = alias.cp, .text = std::string(name_text(alias.name))});
+    }
+    return labels;
+}
+
 std::string_view unicode_version() { return tbl::kTables.version; }
 
 }  // namespace tellmeutf::ucd

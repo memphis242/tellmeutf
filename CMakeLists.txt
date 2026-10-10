@@ -12,6 +12,7 @@ endif()
 
 option(TELLMEUTF_WERROR "Treat compiler warnings as errors" OFF)
 option(TELLMEUTF_SANITIZE "Build with AddressSanitizer and UndefinedBehaviorSanitizer" OFF)
+option(TELLMEUTF_SEMANTIC "Build the optional semantic search (needs scripts/fetch-semantic.sh)" OFF)
 option(TELLMEUTF_BUILD_TESTS "Build the tests" ON)
 
 # Warning and sanitizer flags shared by every target.

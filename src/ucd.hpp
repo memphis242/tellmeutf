@@ -55,6 +55,23 @@ struct CharInfo {
 // when `query` has no words. Does not enumerate the ideograph ranges.
 [[nodiscard]] std::vector<char32_t> search(std::string_view query);
 
+// A name or alias together with the code point it describes.
+struct Label {
+    char32_t cp = 0;
+    std::string text;
+
+    [[nodiscard]] bool operator==(const Label &) const = default;
+};
+
+// Every name and alias that describes a character in words: all explicitly
+// listed names and all aliases, excluding the algorithmic names (ideograph
+// ranges, Hangul syllables), the listed names that only spell their own code
+// point in hexadecimal ("CJK COMPATIBILITY IDEOGRAPH-F900"), and the
+// angle-bracket labels. Text is as stored
+// (upper case ASCII). Order is stable: listed names by code point, then
+// aliases.
+[[nodiscard]] std::vector<Label> descriptive_labels();
+
 // Version of the compiled-in data, for example "18.0.0".
 [[nodiscard]] std::string_view unicode_version();
 

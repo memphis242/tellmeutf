@@ -195,6 +195,31 @@ void test_metadata() {
     CHECK(codes.size() == 30);
 }
 
+void test_descriptive_labels() {
+    const std::vector<ucd::Label> labels = ucd::descriptive_labels();
+    CHECK(labels.size() > 30000 && labels.size() < 40000);
+    bool has_poo = false;
+    bool has_alias = false;
+    bool any_bracket = false;
+    bool any_algorithmic = false;
+    bool any_hex_name = false;
+    for (const struct ucd::Label &label : labels) {
+        any_bracket = any_bracket || label.text.starts_with('<') || label.text.empty();
+        any_algorithmic = any_algorithmic || label.text.starts_with("CJK UNIFIED IDEOGRAPH-") ||
+                          label.text.starts_with("HANGUL SYLLABLE");
+        any_hex_name = any_hex_name || label.text.starts_with("CJK COMPATIBILITY IDEOGRAPH-") ||
+                       label.text.starts_with("EGYPTIAN HIEROGLYPH-");
+        has_poo = has_poo || (label.cp == 0x1F4A9 && label.text == "PILE OF POO");
+        has_alias = has_alias || (label.cp == 0xA0 && label.text == "NBSP");
+    }
+    CHECK(has_poo);
+    CHECK(has_alias);
+    CHECK(!any_bracket);
+    CHECK(!any_algorithmic);
+    CHECK(!any_hex_name);
+    CHECK(labels == ucd::descriptive_labels());
+}
+
 }  // namespace
 
 int main() {
@@ -206,5 +231,6 @@ int main() {
     test_search();
     test_name_round_trip();
     test_metadata();
+    test_descriptive_labels();
     return tellmeutf::test::finish();
 }
