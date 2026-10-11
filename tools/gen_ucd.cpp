@@ -1,8 +1,8 @@
 // Build-time generator: reads the vendored Unicode Character Database files and
-// writes one C++ source file holding the lookup tables declared in
-// src/ucd_tables.hpp.
+// the vendored CLDR English annotations, and writes one C++ source file holding
+// the lookup tables declared in src/ucd_tables.hpp.
 //
-//   gen_ucd <UnicodeData.txt> <NameAliases.txt> <EastAsianWidth.txt> -o <output.cpp>
+//   gen_ucd <UnicodeData.txt> <NameAliases.txt> <EastAsianWidth.txt> <annotations/en.xml> -o <output.cpp>
 //
 // Malformed input is reported as "file:line: message" on stderr with a non-zero
 // exit status.
@@ -15,6 +15,7 @@
 #include <cstdlib>
 #include <fstream>
 #include <map>
+#include <optional>
 #include <set>
 #include <sstream>
 #include <string>
@@ -402,6 +403,325 @@ std::vector<WideRange> parse_east_asian_width(const std::string &file, const std
     return ranges;
 }
 
+enum class AnnotationKind {
+    ShortName,  // sorts before Keyword
+    Keyword,
+};
+
+struct AnnotationRow {
+    std::uint32_t cp = 0;
+    AnnotationKind kind = AnnotationKind::Keyword;
+    std::string text;  // normalized into name form
+};
+
+// Decodes strict UTF-8 (no overlong forms, surrogates or values above 10FFFF);
+// returns nothing for malformed input.
+std::optional<std::vector<std::uint32_t>> decode_utf8(const std::string_view text) {
+    std::vector<std::uint32_t> points;
+    std::size_t i = 0;
+    while (i < text.size()) {
+        const auto lead = static_cast<unsigned char>(text[i]);
+        std::size_t extra = 0;
+        std::uint32_t value = 0;
+        std::uint32_t minimum = 0;
+        if (lead < 0x80) {
+            value = lead;
+        } else if (lead >= 0xC2 && lead <= 0xDF) {
+            extra = 1;
+            value = lead & 0x1Fu;
+            minimum = 0x80;
+        } else if (lead >= 0xE0 && lead <= 0xEF) {
+            extra = 2;
+            value = lead & 0x0Fu;
+            minimum = 0x800;
+        } else if (lead >= 0xF0 && lead <= 0xF4) {
+            extra = 3;
+            value = lead & 0x07u;
+            minimum = 0x10000;
+        } else {
+            return std::nullopt;
+        }
+        if (extra != 0 && i + extra >= text.size()) {
+            return std::nullopt;
+        }
+        for (std::size_t k = 1; k <= extra; ++k) {
+            const auto continuation = static_cast<unsigned char>(text[i + k]);
+            if ((continuation & 0xC0u) != 0x80u) {
+                return std::nullopt;
+            }
+            value = (value << 6) | (continuation & 0x3Fu);
+        }
+        if (value < minimum || value > kLastCodePoint || (value >= 0xD800 && value <= 0xDFFF)) {
+            return std::nullopt;
+        }
+        points.push_back(value);
+        i += extra + 1;
+    }
+    return points;
+}
+
+// Latin letters with a diacritic that fold to a plain ASCII letter in annotation
+// texts: the Latin-1 Supplement vowels, y, n and c, and the macron and caron vowels.
+struct Fold {
+    std::uint32_t from;
+    char to;
+};
+constexpr Fold kLatinFolds[] = {
+    // A with grave, acute, circumflex, tilde, diaeresis, ring above (upper, then lower case)
+    {0xC0, 'A'}, {0xC1, 'A'}, {0xC2, 'A'}, {0xC3, 'A'}, {0xC4, 'A'}, {0xC5, 'A'},
+    {0xE0, 'A'}, {0xE1, 'A'}, {0xE2, 'A'}, {0xE3, 'A'}, {0xE4, 'A'}, {0xE5, 'A'},
+    // C with cedilla
+    {0xC7, 'C'}, {0xE7, 'C'},
+    // E with grave, acute, circumflex, diaeresis
+    {0xC8, 'E'}, {0xC9, 'E'}, {0xCA, 'E'}, {0xCB, 'E'},
+    {0xE8, 'E'}, {0xE9, 'E'}, {0xEA, 'E'}, {0xEB, 'E'},
+    // I with grave, acute, circumflex, diaeresis
+    {0xCC, 'I'}, {0xCD, 'I'}, {0xCE, 'I'}, {0xCF, 'I'},
+    {0xEC, 'I'}, {0xED, 'I'}, {0xEE, 'I'}, {0xEF, 'I'},
+    // N with tilde
+    {0xD1, 'N'}, {0xF1, 'N'},
+    // O with grave, acute, circumflex, tilde, diaeresis
+    {0xD2, 'O'}, {0xD3, 'O'}, {0xD4, 'O'}, {0xD5, 'O'}, {0xD6, 'O'},
+    {0xF2, 'O'}, {0xF3, 'O'}, {0xF4, 'O'}, {0xF5, 'O'}, {0xF6, 'O'},
+    // U with grave, acute, circumflex, diaeresis
+    {0xD9, 'U'}, {0xDA, 'U'}, {0xDB, 'U'}, {0xDC, 'U'},
+    {0xF9, 'U'}, {0xFA, 'U'}, {0xFB, 'U'}, {0xFC, 'U'},
+    // Y with acute; lower case y with diaeresis
+    {0xDD, 'Y'}, {0xFD, 'Y'}, {0xFF, 'Y'},
+    // A, E, I, O, U with macron (upper, then lower case)
+    {0x100, 'A'}, {0x101, 'A'}, {0x112, 'E'}, {0x113, 'E'}, {0x12A, 'I'}, {0x12B, 'I'},
+    {0x14C, 'O'}, {0x14D, 'O'}, {0x16A, 'U'}, {0x16B, 'U'},
+    // I, O, U with caron (upper, then lower case)
+    {0x1CF, 'I'}, {0x1D0, 'I'}, {0x1D1, 'O'}, {0x1D2, 'O'}, {0x1D3, 'U'}, {0x1D4, 'U'},
+};
+
+char fold_latin_letter(const std::uint32_t cp) {
+    for (const struct Fold &fold : kLatinFolds) {
+        if (fold.from == cp) {
+            return fold.to;
+        }
+    }
+    return '\0';
+}
+
+bool is_alphanumeric(const char c) {
+    return (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9');
+}
+
+// Rewrites an annotation text into name form: upper case ASCII letters, digits,
+// single spaces and hyphens between alphanumerics. Apostrophes vanish, other
+// ASCII punctuation becomes a space and accented Latin letters fold to ASCII.
+// Returns nothing when the text holds any other non-ASCII character or has no
+// word left.
+std::optional<std::string> normalize_annotation(const std::vector<std::uint32_t> &points) {
+    std::string raw;
+    for (const std::uint32_t cp : points) {
+        if (cp == '\'' || cp == 0x2019) {
+            continue;
+        }
+        if (cp < 0x80) {
+            const char c = static_cast<char>(cp);
+            if (c >= 'a' && c <= 'z') {
+                raw += static_cast<char>(c - 'a' + 'A');
+            } else if (is_alphanumeric(c) || c == '-') {
+                raw += c;
+            } else {
+                raw += ' ';
+            }
+        } else if (const char folded = fold_latin_letter(cp); folded != '\0') {
+            raw += folded;
+        } else {
+            return std::nullopt;
+        }
+    }
+    std::string text;
+    for (std::size_t i = 0; i < raw.size(); ++i) {
+        const char c = raw[i];
+        if (c == '-' && !(i > 0 && is_alphanumeric(raw[i - 1]) && i + 1 < raw.size() && is_alphanumeric(raw[i + 1]))) {
+            text += ' ';
+        } else {
+            text += c;
+        }
+    }
+    std::string collapsed;
+    for (const char c : text) {
+        if (c == ' ' && (collapsed.empty() || collapsed.back() == ' ')) {
+            continue;
+        }
+        collapsed += c;
+    }
+    if (!collapsed.empty() && collapsed.back() == ' ') {
+        collapsed.pop_back();
+    }
+    if (collapsed.empty()) {
+        return std::nullopt;
+    }
+    return collapsed;
+}
+
+// Replaces the five predefined XML entities; any other '&' is malformed.
+std::string decode_entities(const std::string &file, const std::size_t line, const std::string_view text) {
+    static const std::map<std::string_view, char> entities{
+        {"&amp;", '&'}, {"&lt;", '<'}, {"&gt;", '>'}, {"&quot;", '"'}, {"&apos;", '\''},
+    };
+    std::string decoded;
+    for (std::size_t i = 0; i < text.size();) {
+        if (text[i] != '&') {
+            decoded += text[i++];
+            continue;
+        }
+        const std::size_t semicolon = text.find(';', i);
+        const auto found = semicolon == std::string_view::npos ? entities.end()
+                                                               : entities.find(text.substr(i, semicolon - i + 1));
+        if (found == entities.end()) {
+            fail(file, line, "unknown or malformed XML entity in '" + std::string(text) + "'");
+        }
+        decoded += found->second;
+        i = semicolon + 1;
+    }
+    return decoded;
+}
+
+// The en.xml annotation lines look like
+//   <annotation cp="X">keyword | keyword</annotation>
+//   <annotation cp="X" type="tts">short name</annotation>
+// Only single-code-point annotations are kept; XML comments are ignored.
+std::vector<AnnotationRow> parse_annotations(const std::string &file) {
+    constexpr std::string_view open_tag = "<annotation ";
+    constexpr std::string_view cp_attribute = "<annotation cp=\"";
+    constexpr std::string_view tts_attribute = " type=\"tts\">";
+    constexpr std::string_view close_tag = "</annotation>";
+
+    struct Pending {
+        AnnotationRow row;
+        std::size_t line = 0;
+    };
+    std::vector<Pending> pending;
+    std::set<std::uint32_t> short_name_cps;
+    bool in_comment = false;
+
+    for (const struct SourceLine &source : read_lines(file)) {
+        const std::size_t line = source.number;
+        // The text outside XML comments.
+        std::string visible;
+        for (std::size_t pos = 0; pos < source.text.size();) {
+            if (in_comment) {
+                const std::size_t end = source.text.find("-->", pos);
+                if (end == std::string::npos) {
+                    break;
+                }
+                in_comment = false;
+                pos = end + 3;
+            } else {
+                const std::size_t start = source.text.find("<!--", pos);
+                visible.append(source.text, pos, start == std::string::npos ? std::string::npos : start - pos);
+                if (start == std::string::npos) {
+                    break;
+                }
+                in_comment = true;
+                pos = start + 4;
+            }
+        }
+        const std::string_view text = trim(visible);
+        if (text.find(open_tag) == std::string_view::npos) {
+            continue;
+        }
+
+        if (!text.starts_with(cp_attribute) || !text.ends_with(close_tag)) {
+            fail(file, line, "malformed annotation line; expected '<annotation cp=\"...\">...</annotation>'");
+        }
+        const std::string_view after_open = text.substr(cp_attribute.size());
+        const std::size_t cp_end = after_open.find('"');
+        if (cp_end == std::string_view::npos) {
+            fail(file, line, "unterminated cp attribute");
+        }
+        std::string_view rest = after_open.substr(cp_end + 1);
+        bool is_short_name = false;
+        if (rest.starts_with(tts_attribute)) {
+            is_short_name = true;
+            rest.remove_prefix(tts_attribute.size());
+        } else if (rest.starts_with('>')) {
+            rest.remove_prefix(1);
+        } else if (rest.starts_with(" type=")) {
+            fail(file, line, "unsupported annotation type; only type=\"tts\" is understood");
+        } else {
+            fail(file, line, "malformed annotation line; expected '>' after the cp attribute");
+        }
+        rest.remove_suffix(close_tag.size());
+        if (rest.find('<') != std::string_view::npos) {
+            fail(file, line, "unexpected markup inside an annotation");
+        }
+
+        const std::optional<std::vector<std::uint32_t>> cp_points =
+            decode_utf8(decode_entities(file, line, after_open.substr(0, cp_end)));
+        if (!cp_points) {
+            fail(file, line, "invalid UTF-8 in the cp attribute");
+        }
+        if (cp_points->empty()) {
+            fail(file, line, "empty cp attribute");
+        }
+        if (cp_points->size() > 1) {
+            continue;  // an emoji sequence
+        }
+        const std::uint32_t cp = cp_points->front();
+
+        if (is_short_name && !short_name_cps.insert(cp).second) {
+            fail(file, line, "second short name for code point " + hex(cp));
+        }
+        const std::string decoded = decode_entities(file, line, rest);
+        const std::vector<std::string_view> pieces =
+            is_short_name ? std::vector<std::string_view>{decoded} : [&] {
+                std::vector<std::string_view> found;
+                std::string_view remaining = decoded;
+                for (std::size_t bar; (bar = remaining.find(" | ")) != std::string_view::npos;) {
+                    found.push_back(remaining.substr(0, bar));
+                    remaining.remove_prefix(bar + 3);
+                }
+                found.push_back(remaining);
+                return found;
+            }();
+        for (const std::string_view piece : pieces) {
+            const std::optional<std::vector<std::uint32_t>> points = decode_utf8(trim(piece));
+            if (!points) {
+                fail(file, line, "invalid UTF-8 in an annotation text");
+            }
+            std::optional<std::string> name = normalize_annotation(*points);
+            if (!name) {
+                continue;
+            }
+            if (name->size() > kMaxNameLength) {
+                fail(file, line, "annotation longer than " + std::to_string(kMaxNameLength) + " characters");
+            }
+            pending.push_back(Pending{.row = AnnotationRow{.cp = cp,
+                                                            .kind = is_short_name ? AnnotationKind::ShortName
+                                                                                  : AnnotationKind::Keyword,
+                                                            .text = std::move(*name)},
+                                      .line = line});
+        }
+    }
+
+    // Stable: keywords of one code point keep their file order.
+    std::stable_sort(pending.begin(), pending.end(), [](const struct Pending &a, const struct Pending &b) {
+        return a.row.cp != b.row.cp ? a.row.cp < b.row.cp : a.row.kind < b.row.kind;
+    });
+    // A text that repeats an earlier text of the same code point is dropped, so
+    // the short name wins over an equal keyword.
+    std::vector<AnnotationRow> rows;
+    std::set<std::string> seen;
+    for (struct Pending &item : pending) {
+        if (rows.empty() || rows.back().cp != item.row.cp) {
+            seen.clear();
+        }
+        if (seen.insert(item.row.text).second) {
+            rows.push_back(std::move(item.row));
+        }
+    }
+    if (rows.empty()) {
+        fail(file, 0, "no annotations found");
+    }
+    return rows;
+}
+
 // Collects names into one blob and hands out (offset, length) references. The
 // blob is emitted as a byte array: a string literal of this size exceeds the
 // limit that C++ compilers are required to support.
@@ -428,7 +748,8 @@ private:
     std::string bytes_;
 };
 
-std::string generate(const struct UnicodeData &unicode, const struct AliasData &aliases, const std::vector<WideRange> &wide) {
+std::string generate(const struct UnicodeData &unicode, const struct AliasData &aliases, const std::vector<WideRange> &wide,
+                     const std::vector<AnnotationRow> &annotations) {
     NameBlob blob;
     std::ostringstream entries;
     for (const struct Entry &entry : unicode.entries) {
@@ -450,8 +771,15 @@ std::string generate(const struct UnicodeData &unicode, const struct AliasData &
         wide_rows << "{" << hex(range.first) << "," << hex(range.last) << "},\n";
     }
 
+    std::ostringstream annotation_rows;
+    for (const struct AnnotationRow &annotation : annotations) {
+        annotation_rows << "{" << hex(annotation.cp) << ",AnnotationKind::"
+                        << (annotation.kind == AnnotationKind::ShortName ? "ShortName" : "Keyword") << ","
+                        << blob.reference(annotation.text) << "},\n";
+    }
+
     std::ostringstream out;
-    out << "// Generated by tools/gen_ucd.cpp from the vendored UCD files. Do not edit.\n"
+    out << "// Generated by tools/gen_ucd.cpp from the vendored UCD files and CLDR annotations. Do not edit.\n"
            "#include \"ucd_tables.hpp\"\n\n"
            "namespace tellmeutf::ucd::tables {\nnamespace {\n\n"
            "constexpr char kNames[] = {\n"
@@ -460,6 +788,7 @@ std::string generate(const struct UnicodeData &unicode, const struct AliasData &
         << "constexpr Range kRanges[] = {\n" << ranges.str() << "};\n\n"
         << "constexpr Alias kAliases[] = {\n" << alias_rows.str() << "};\n\n"
         << "constexpr WideRange kWide[] = {\n" << wide_rows.str() << "};\n\n"
+        << "constexpr Annotation kAnnotations[] = {\n" << annotation_rows.str() << "};\n\n"
         << "}  // namespace\n\n"
         << "static_assert(sizeof(kNames) == " << blob.size() << ");\n\n"
         << "constexpr Tables kTables{\n"
@@ -469,6 +798,7 @@ std::string generate(const struct UnicodeData &unicode, const struct AliasData &
            "    .ranges = kRanges,\n"
            "    .aliases = kAliases,\n"
            "    .wide = kWide,\n"
+           "    .annotations = kAnnotations,\n"
            "};\n\n"
            "}  // namespace tellmeutf::ucd::tables\n";
     return out.str();
@@ -491,32 +821,43 @@ int main(const int argc, const char *const argv[]) {
             inputs.emplace_back(arg);
         }
     }
-    if (inputs.size() != 3 || output.empty()) {
+    if (inputs.size() != 4 || output.empty()) {
         std::fprintf(stderr,
-                     "usage: gen_ucd <UnicodeData.txt> <NameAliases.txt> <EastAsianWidth.txt> -o <output.cpp>\n");
+                     "usage: gen_ucd <UnicodeData.txt> <NameAliases.txt> <EastAsianWidth.txt> <annotations/en.xml> "
+                     "-o <output.cpp>\n");
         return 2;
     }
 
     const struct UnicodeData unicode = parse_unicode_data(inputs[0]);
     const struct AliasData aliases = parse_name_aliases(inputs[1]);
     const std::vector<WideRange> wide = parse_east_asian_width(inputs[2], aliases.version);
+    const std::vector<AnnotationRow> annotations = parse_annotations(inputs[3]);
 
-    // Every alias must refer to a code point that the other data describes as
-    // an explicit entry or inside a range.
+    // Every alias and annotation must refer to a code point that the other data
+    // describes as an explicit entry or inside a range.
+    const auto is_listed = [&unicode](const std::uint32_t cp) {
+        const auto entry = std::lower_bound(unicode.entries.begin(), unicode.entries.end(), cp,
+                                            [](const struct Entry &e, const std::uint32_t value) { return e.cp < value; });
+        if (entry != unicode.entries.end() && entry->cp == cp) {
+            return true;
+        }
+        return std::any_of(unicode.ranges.begin(), unicode.ranges.end(),
+                           [cp](const struct Range &r) { return cp >= r.first && cp <= r.last; });
+    };
     for (const struct Alias &alias : aliases.aliases) {
-        const auto entry = std::lower_bound(unicode.entries.begin(), unicode.entries.end(), alias.cp,
-                                            [](const struct Entry &e, const std::uint32_t cp) { return e.cp < cp; });
-        const bool listed = entry != unicode.entries.end() && entry->cp == alias.cp;
-        const bool in_range = std::any_of(unicode.ranges.begin(), unicode.ranges.end(), [&](const struct Range &r) {
-            return alias.cp >= r.first && alias.cp <= r.last;
-        });
-        if (!listed && !in_range) {
+        if (!is_listed(alias.cp)) {
             fail(inputs[1], 0, "alias '" + alias.name + "' refers to a code point (" +
                                    hex(alias.cp) + ") that UnicodeData.txt does not list");
         }
     }
+    for (const struct AnnotationRow &annotation : annotations) {
+        if (!is_listed(annotation.cp)) {
+            fail(inputs[3], 0, "annotation '" + annotation.text + "' refers to a code point (" + hex(annotation.cp) +
+                                   ") that UnicodeData.txt does not list; the CLDR release is newer than the Unicode data");
+        }
+    }
 
-    const std::string text = generate(unicode, aliases, wide);
+    const std::string text = generate(unicode, aliases, wide, annotations);
     std::ofstream out(output, std::ios::binary | std::ios::trunc);
     out << text;
     out.close();

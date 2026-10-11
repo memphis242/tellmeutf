@@ -105,6 +105,10 @@ constexpr double kConfidentGlueCoverage = 0.85;
 constexpr std::size_t kMinGlueTrigrams = 6;
 constexpr double kConfidentScore = 0.65;
 constexpr double kConfidentMargin = 0.04;
+// A CLDR short name or keyword scores this share of what the same evidence
+// earns an official name or alias, so an official name wins a tie. The gap
+// at a perfect score is a little over kConfidentMargin.
+constexpr double kAnnotationFactor = 0.95;
 
 // ---------------------------------------------------------------------------
 // Small string helpers
@@ -210,8 +214,12 @@ struct WordMatch {
 
 // Similarity in [0, 1] of a query word to a vocabulary word, ignoring stems
 // (those are handled through the stem index). 0 when not similar enough.
-// `prior` in (0, 1] scales the similarity of edit-distance matches.
-[[nodiscard]] struct WordMatch word_similarity(const std::string_view query, const std::string_view word, const double prior) {
+// `prior` in (0, 1] scales the similarity of edit-distance matches. A match
+// with two edits is only strong when `two_edits_can_be_strong`: an everyday
+// word has many neighbors two edits away, so that is not evidence unless the
+// word is a Unicode name word (see Index::official_word).
+[[nodiscard]] struct WordMatch word_similarity(const std::string_view query, const std::string_view word, const double prior,
+                                               const bool two_edits_can_be_strong = true) {
     if (query == word) {
         return {1.0, true};
     }
@@ -230,7 +238,8 @@ struct WordMatch {
         if (distance <= allowance) {
             const std::size_t longer_size = std::max(query.size(), word.size());
             const double similarity = prior * (1.0 - static_cast<double>(distance) / static_cast<double>(longer_size));
-            const bool strong = longer_size >= (distance == 1 ? kStrongOneEditLength : kStrongTwoEditLength);
+            const bool strong = distance == 1 ? longer_size >= kStrongOneEditLength
+                                              : two_edits_can_be_strong && longer_size >= kStrongTwoEditLength;
             if (similarity > best.similarity) {
                 best.similarity = similarity;
                 best.strong = strong;
@@ -288,12 +297,18 @@ constexpr std::uint32_t kPadClass = 36;
 
 struct LabelRecord {
     char32_t cp = 0;
+    internal::LabelOrigin origin = internal::LabelOrigin::Official;
     std::uint32_t first_word = 0;     // offset of the label's distinct word ids in Index::label_words
     std::uint32_t distinct_words = 0;
     std::uint32_t total_words = 0;    // including repeats, for tie-breaking
     std::uint32_t trigram_count = 0;  // distinct trigrams
     double idf_total = 0.0;           // summed idf of the distinct words
 };
+
+// What a label's evidence is multiplied by (see kAnnotationFactor).
+[[nodiscard]] double origin_factor(const struct LabelRecord &record) {
+    return record.origin == internal::LabelOrigin::Annotation ? kAnnotationFactor : 1.0;
+}
 
 // Offsets into a flat list: the entries of key k are list[offsets[k] .. offsets[k+1]).
 struct Postings {
@@ -329,6 +344,7 @@ struct Index {
     std::deque<std::string> words;  // vocabulary, stable addresses
     std::vector<double> idf;        // per vocabulary word
     std::vector<double> typo_prior; // per vocabulary word, see kTypoPriorFloor
+    std::vector<bool> official_word; // per vocabulary word: in some name or alias, not only in CLDR text
     double unknown_word_idf = 0.0;
     std::unordered_map<std::string, std::vector<std::uint32_t>> by_stem;
     std::vector<LabelRecord> labels;
@@ -352,7 +368,7 @@ struct Index {
         trigram_pairs.reserve(kExpectedLabels * 30);
         ids.reserve(kExpectedWords);
 
-        internal::visit_labels(include_hangul, [&](const char32_t cp, const std::string_view label) {
+        internal::visit_labels(include_hangul, [&](const char32_t cp, const std::string_view label, const internal::LabelOrigin origin) {
             internal::split_words(label, split);
             distinct.clear();
             for (const std::string_view word : split) {
@@ -364,7 +380,11 @@ struct Index {
                     words.emplace_back(word);
                     ids.emplace(std::string_view(words.back()), id);
                     df.push_back(0);
+                    official_word.push_back(false);
                     distinct.push_back(id);
+                }
+                if (origin == internal::LabelOrigin::Official) {
+                    official_word[distinct.back()] = true;
                 }
             }
             if (split.empty()) {
@@ -373,6 +393,7 @@ struct Index {
             const auto label_id = static_cast<std::uint32_t>(labels.size());
             struct LabelRecord record;
             record.cp = cp;
+            record.origin = origin;
             record.total_words = static_cast<std::uint32_t>(distinct.size());
             std::ranges::sort(distinct);
             const auto duplicates = std::ranges::unique(distinct);
@@ -474,7 +495,7 @@ std::vector<FuzzyMatch> fuzzy_search(const std::string_view query, const std::si
     if (std::ranges::any_of(query, [](const char c) { return static_cast<unsigned char>(c) >= 0x80; })) {
         return {};
     }
-    const std::string upper = internal::uppercase(query);
+    const std::string upper = internal::normalize_query(query);
     std::vector<std::string_view> query_words;
     internal::split_words(upper, query_words);
     if (query_words.size() > kMaxQueryWords) {
@@ -519,7 +540,7 @@ std::vector<FuzzyMatch> fuzzy_search(const std::string_view query, const std::si
         const std::string_view word = query_words[q];
         std::unordered_map<std::uint32_t, struct WordMatch> found;
         for (std::size_t v = 0; v < idx.words.size(); ++v) {
-            const struct WordMatch match = word_similarity(word, idx.words[v], idx.typo_prior[v]);
+            const struct WordMatch match = word_similarity(word, idx.words[v], idx.typo_prior[v], idx.official_word[v]);
             if (match.similarity >= kMinWordSimilarity) {
                 found[static_cast<std::uint32_t>(v)] = match;
             }
@@ -605,7 +626,7 @@ std::vector<FuzzyMatch> fuzzy_search(const std::string_view query, const std::si
         const double word_score =
             denominator > 0.0 ? (1.0 + kRecallWeight) * precision * recall / denominator : 0.0;
         const double char_score = shared[label] != 0 ? dice(label) : 0.0;
-        const double score = fuse(word_score, char_score);
+        const double score = fuse(word_score, char_score) * origin_factor(record);
         bool any_strong = false;
         bool any_weak = false;
         bool all_matched = true;
@@ -628,7 +649,7 @@ std::vector<FuzzyMatch> fuzzy_search(const std::string_view query, const std::si
             continue;
         }
         const double char_score = dice(label);
-        const double score = fuse(0.0, char_score);
+        const double score = fuse(0.0, char_score) * origin_factor(idx.labels[label]);
         if (score >= kMinScore) {
             scored.push_back(Scored{.cp = idx.labels[label].cp, .score = score, .words = idx.labels[label].total_words,
                                     .char_score = char_score, .char_coverage = coverage(label)});

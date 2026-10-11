@@ -195,9 +195,44 @@ void test_metadata() {
     CHECK(codes.size() == 30);
 }
 
+void test_annotations() {
+    // A CLDR short name is an exact name when no official name or alias is.
+    CHECK(ucd::find_exact("backslash") == std::vector<char32_t>{0x5C});
+    CHECK(ucd::find_exact("Bell with Slash") == std::vector<char32_t>{0x1F515});
+    CHECK(ucd::find_exact("red heart") == std::vector<char32_t>{0x2764});
+    // An official name wins over a CLDR short name: CHECK MARK is U+2713, even
+    // though CLDR calls U+2714 "check mark".
+    CHECK(ucd::find_exact("check mark") == std::vector<char32_t>{0x2713});
+    // A keyword is not a name.
+    CHECK(ucd::find_exact("tick").empty());
+    CHECK(ucd::find_exact("whack").empty());
+
+    // Apostrophes are not significant, in the query or in CLDR's text.
+    CHECK(ucd::find_exact("woman's boot") == std::vector<char32_t>{0x1F462});
+    CHECK(ucd::find_exact("womans boot") == std::vector<char32_t>{0x1F462});
+    CHECK(ucd::find_exact("one o\xE2\x80\x99" "clock") == std::vector<char32_t>{0x1F550});
+    CHECK(ucd::find_exact("one o'clock") == std::vector<char32_t>{0x1F550});
+
+    // Keywords are searched with the names, and rank by the same rule: the
+    // one-word keyword TICK puts U+2714 ahead of the five-word WHITE SQUARE
+    // WITH LEFTWARDS TICK (U+27E4).
+    const std::vector<char32_t> tick = ucd::search("tick");
+    const auto heavy_check = std::ranges::find(tick, char32_t{0x2714});
+    const auto square_tick = std::ranges::find(tick, char32_t{0x27E4});
+    CHECK(heavy_check != tick.end() && square_tick != tick.end());
+    CHECK(heavy_check < square_tick);
+    CHECK(contains(ucd::search("pipe"), 0x7C));
+    CHECK(contains(ucd::search("whack"), 0x5C));
+    CHECK(contains(ucd::search("love"), 0x2764));
+    // Every query word must match one label: no label of U+2764 has both.
+    CHECK(!contains(ucd::search("love zebra"), 0x2764));
+    // Keywords match as prefixes, like name words.
+    CHECK(contains(ucd::search("tic"), 0x2714));
+}
+
 void test_descriptive_labels() {
     const std::vector<ucd::Label> labels = ucd::descriptive_labels();
-    CHECK(labels.size() > 30000 && labels.size() < 40000);
+    CHECK(labels.size() > 40000 && labels.size() < 60000);
     bool has_poo = false;
     bool has_alias = false;
     bool any_bracket = false;
@@ -214,6 +249,12 @@ void test_descriptive_labels() {
     }
     CHECK(has_poo);
     CHECK(has_alias);
+    // CLDR keywords and short names are labels too, and a text that is already
+    // a name of its code point is listed once.
+    CHECK(std::ranges::count(labels, ucd::Label{.cp = 0x2714, .text = "TICK", .kind = ucd::LabelKind::Keyword}) == 1);
+    CHECK(std::ranges::count(labels, ucd::Label{.cp = 0x5C, .text = "BACKSLASH", .kind = ucd::LabelKind::ShortName}) == 1);
+    CHECK(std::ranges::count(labels, ucd::Label{.cp = 0x2603, .text = "SNOWMAN", .kind = ucd::LabelKind::Name}) == 1);
+    CHECK(std::ranges::count(labels, ucd::Label{.cp = 0x2603, .text = "SNOWMAN", .kind = ucd::LabelKind::ShortName}) == 0);
     CHECK(!any_bracket);
     CHECK(!any_algorithmic);
     CHECK(!any_hex_name);
@@ -231,6 +272,7 @@ int main() {
     test_search();
     test_name_round_trip();
     test_metadata();
+    test_annotations();
     test_descriptive_labels();
     return tellmeutf::test::finish();
 }

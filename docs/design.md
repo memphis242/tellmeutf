@@ -51,31 +51,73 @@ accepted as code points and shown with the label `<surrogate>`.
 Names are matched against the official Unicode names plus every alias in
 `NameAliases.txt` (control names, abbreviations such as `NBSP`, `ZWJ`, `LF`,
 corrections, and so on), plus the algorithmic names (Hangul syllables and the
-ideograph ranges, see below).
+ideograph ranges, see below), plus the CLDR short names and keywords (see
+"CLDR annotations" below). Together these are the *labels* of a code point.
 
-Words. A name or query is uppercased and split into words at whitespace, at
-underscores, and at a hyphen that sits between two letters/digits (a medial
-hyphen). A hyphen anywhere else stays part of its word, which keeps
-`TIBETAN LETTER -A` (U+0F60) distinct from `TIBETAN LETTER A` (U+0F68).
-`right-pointing`, `RIGHT POINTING` and `right_pointing` are the same words.
+Words. A name or query is uppercased, stripped of apostrophes (`'` and the
+typographic U+2019: `woman's` is `womans`; no official name has one), and split
+into words at whitespace, at underscores, and at a hyphen that sits between two
+letters/digits (a medial hyphen). A hyphen anywhere else stays part of its word,
+which keeps `TIBETAN LETTER -A` (U+0F60) distinct from `TIBETAN LETTER A`
+(U+0F68). `right-pointing`, `RIGHT POINTING` and `right_pointing` are the same
+words.
 
 - **Exact**: the query's word sequence equals the word sequence of a name or
   alias. An exact match wins over everything else. If more than one code point
-  matches exactly, the result is ambiguous.
+  matches exactly, the result is ambiguous. When no name or alias matches
+  exactly, a CLDR short name that does (`backslash` for U+005C) counts as the
+  exact match.
 - **Search** (only when nothing matches exactly): a code point matches if every
-  query word is a prefix of some word in one of its names or aliases. Results
-  are ranked best first: (1) every query word equals a whole name word, before
+  query word is a prefix of some word in one of its labels (names, aliases,
+  CLDR short name, CLDR keywords; one label at a time, so the words must all
+  come from the same label). Results
+  are ranked best first: (1) every query word equals a whole label word, before
   prefix-only matches; (2) fewer words in the matching label first; (3) lower
   code point first. A single result is treated like an exact match; several results are
   ambiguous.
 - **Approximate** (only when nothing matches strictly, and not with `--exact`):
   see the next subsection.
 
+#### CLDR annotations
+
+`data/cldr/annotations/en.xml` (CLDR 48.2, English) gives many characters a
+short name and a handful of keywords written for people searching by
+everyday words: U+002F has the short name `slash` and the keywords `oblique`,
+`solidus`, `stroke`, `virgule`, `whack`; U+2714 has the keyword `tick`; U+005C
+has the short name `backslash` (its Unicode name is REVERSE SOLIDUS); U+2764 has
+`love`. Only the annotations of single code points are used (1,768 characters
+with 1,751 short names and 9,101 keywords after normalization; emoji sequences
+are ignored). The generator turns each text into the form of a name (upper
+case ASCII words: apostrophes removed, other punctuation read as a space, Latin
+letters with diacritics folded to their base letter) and drops a text it cannot
+reduce to that (arithmetic symbols, ranges such as `1-2`).
+
+How they take part:
+
+- A short name is a name only when no official name or alias matches: it is
+  CLDR's own canonical name for the character, and each short name belongs to
+  one character. Official names always win, so `check mark` stays U+2713 even
+  though CLDR calls U+2714 `check mark`.
+- A keyword is not a name (it is shared: 1,344 of 3,489 distinct keywords belong
+  to more than one character), so it never makes an exact match. It is a label like any
+  other in search, approximate matching and semantic search, so `tick` lists the
+  characters called `tick` before the longer official names that contain TICK.
+- In approximate matching a CLDR label earns 95% of the score its evidence
+  would give an official label (`kAnnotationFactor`), just over the confidence
+  margin, so when an official name and a keyword match equally well the official
+  name wins and stays confident: `snowmann` is SNOWMAN even though CLDR also
+  calls U+26C4 `snowman`.
+- Semantic search embeds the texts as additional rows, discounted at ranking
+  time (see "Semantic search").
+
+The files are paired with Unicode 18.0.0; characters added in Unicode 18 have no
+annotation until a newer CLDR release is vendored.
+
 #### Approximate fallback
 
 A name that has no exact and no prefix match is scored against every label
-(names and aliases; Hangul syllable names only when the query has a word
-similar to HANGUL or SYLLABLE) by information-retrieval style similarity,
+(names, aliases, CLDR short names and keywords; Hangul syllable names only when
+the query has a word similar to HANGUL or SYLLABLE) by information-retrieval style similarity,
 so typos and loose phrasing still find their character. The ideograph ranges
 are not enumerated here either. The query must be ASCII and at most 200 bytes
 (otherwise there is no approximate match), and only its first 12 words count.
@@ -98,7 +140,8 @@ Two signals are fused into one score in (0, 1]:
   together or split apart (`checkmark`, `pile ofpoo`).
 
 The signals combine as independent evidence, so agreement raises a label above
-what either gives alone. Each code point keeps its best label; results are
+what either gives alone. A CLDR label's score is then multiplied by 0.95 (see
+"CLDR annotations"). Each code point keeps its best label; results are
 ordered by score, then fewer words, then lower code point.
 
 The result is *confident* (the closest match may be shown as the answer) only
@@ -109,17 +152,21 @@ when all of these hold:
 - one signal carries it by itself. Either the word score reaches a minimum and
   every matched query word is a strong match (equal, same stem, a proper prefix
   of at least 4 letters covering most of the label word, one edit on a word of
-  6 or more letters, two edits on a word of 8 or more letters); a weak match on
+  6 or more letters, two edits on a word of 8 or more letters that occurs in
+  some Unicode name or alias: a word found only in CLDR text is an everyday
+  English word with many neighbors two edits away, so `backtick` is not
+  `backpack`); a weak match on
   a shorter word is accepted when another query word matches strongly or when
   every word of a multi-word query matches. Or the query is essentially the
   label with its spaces removed: the trigram Dice similarity and the share of
   the query's trigrams found in the label are both high, for a query of at
   least six trigrams.
 
-So `snowmann`, `strawbery` and `checkmark` are confident, while a single short
-word that is two edits from some other word (`coffee` for COFFIN) or that only
-hides across the boundary of a longer name (`dice` in SHAVED ICE) is listed
-instead. Behavior:
+So `snowmann`, `strawbery` and `fullstop` are confident, while a single short
+word that is two edits from some other word (`annual` for MANUAL) or that only
+hides inside a longer name (`allow` in SHALLOW PAN OF FOOD) is listed instead.
+A word that several characters list equally well (`checkmark`, a CLDR keyword
+of U+2705 and U+2714) is a list too. Behavior:
 
 - Nothing similar enough: the not-found error, status 1.
 - Confident: shown like a single result (the context window per `-C`), status
@@ -129,7 +176,7 @@ instead. Behavior:
   and a note on stderr, status 3.
 
 The index (vocabulary, idf, inverted lists) is built on the first approximate
-lookup, so strict lookups never pay for it (about 25 ms once, then about 1 ms
+lookup, so strict lookups never pay for it (about 20 ms once, then about 1 ms
 per query in a release build). Single-result mode (`-s`) behaves the same; the
 note still goes to stderr.
 
@@ -207,16 +254,30 @@ Design:
   come from a BERT-uncased WordPiece tokenizer (`src/wordpiece.cpp`, vocabulary
   vendored in `data/semantic/`); a sentence vector is the mean of the token
   vectors over the attention mask, scaled to unit length. Queries get no prefix.
-- Corpus: `ucd::descriptive_labels()`, about 35.8 thousand names and aliases
-  (not the algorithmic names, nor names that only spell their own code point).
-  Each label is one row of the index.
+- Corpus: `ucd::descriptive_labels()`, about 45.5 thousand labels: names and
+  aliases (not the algorithmic names, nor names that only spell their own code
+  point), then the CLDR short names and keywords that are not already a name of
+  the same code point (about 35.4 thousand names, 0.5 thousand aliases, 0.6
+  thousand short names, 9.1 thousand keywords). Each label is one row of the index.
+- Row weights: ranking multiplies a row's similarity by a weight set from its
+  label kind, in `src/semantic.cpp`: names and aliases 1.0, CLDR short names
+  0.99, CLDR keywords 0.7. A one-word query is equal to the keyword row of
+  every character that lists the word, so unweighted those rows (all at about
+  0.99) tie with the right answer and crowd it out of the top rows (`star`
+  listed the asterisk and other symbols that merely list the word before U+2B50), and which of
+  the ties comes first is decided by rounding noise. With the weights the
+  official and short names lead and a keyword leads only when nothing else is
+  close, which is how `tick`, `pipe` and `love` get answered. The reported score
+  is the weighted one, so a keyword-only hit shows at most about 0.69 and the
+  list stays in descending order. The weights are applied at query time, so
+  changing them does not invalidate the cache.
 - Search: brute force. The index is a flat float32 matrix; the query is scored
   against every row by dot product (cosine, since all vectors have unit
   length), rows of one code point collapse to the best one, and the top rows
   are kept. With 36 thousand rows of 384 floats this takes well under a
   millisecond, so a vector database or approximate index would add a
   dependency and a failure mode for nothing.
-- Index: built on first use (about 8 s) into
+- Index: built on first use (about 6 s, 70 MB) into
   `${XDG_CACHE_HOME:-$HOME/.cache}/tellmeutf/semantic-index.bin`, written
   atomically and read back with a read-only mmap. The header records the format
   version, vector size, row count, model and vocabulary file sizes, a hash of
@@ -243,11 +304,20 @@ Status 5 means the feature is unavailable: not built in, model files missing,
 the cache directory or index unusable, or the model runtime failed. The message
 is the library's plain error text. Status 3 is never used for semantic results.
 
-Known limits, from the measurements: on a test set of 84 descriptions it puts an
-acceptable character in the top 5 for about 80% (a word-overlap BM25 baseline
-measured in the same spike: 65%; the tool's own name matcher was not
-measured); it fails on words that need outside knowledge ("tick", "love"), and on
-ASCII punctuation by its common name ("pipe", "backslash"); similar names
+Measured with the real tool, `-S -m 10`, on the 84 descriptions of the original
+spike (they were not used to set the weights): an acceptable character was in the top 5 for 80% of them with names
+and aliases only, and for 92% once the CLDR texts were added (top 3: 79% to
+88%, top 10: 83% to 93%; best match right: 67% to 68%). A word-overlap BM25
+baseline measured in the same spike: 65% in the top 5. The tool's own name
+matcher was not measured on that set. On a second set of 136 everyday names
+and synonyms (the one the weights were tuned on) the best match was right 99
+times before and 118 times after, and no acceptable character was in the top
+10 for 22 before and 6 after.
+
+Known limits: a word that needs outside knowledge or a CLDR keyword that is
+missing still fails (`shift key`, `double quote`); a one-word query that is the
+keyword of many characters returns those characters in an arbitrary order
+(`cross` lists crossed fingers and flags among the crosses); similar names
 (BLACK and WHITE variants) crowd the list.
 
 ### Options
@@ -299,7 +369,8 @@ bidirectional formatting characters appear as `\xNN` or `\u{XXXX}`.
 
 ```
 data/ucd/*.txt          vendored Unicode Character Database files (pinned version)
-tools/gen_ucd.cpp       build-time generator: UCD text -> ucd_tables.cpp
+data/cldr/annotations/en.xml  vendored CLDR English annotations (pinned release)
+tools/gen_ucd.cpp       build-time generator: UCD text + CLDR annotations -> ucd_tables.cpp
 src/ucd.hpp             PUBLIC CONTRACT of the lookup library (names, categories, widths)
 src/ucd_tables.hpp      internal: shape of the generated tables
 src/ucd.cpp             lookup + name search over the generated tables
@@ -331,18 +402,27 @@ facade; the model-backed one only with `-DTELLMEUTF_SEMANTIC=ON`),
 
 `gen_ucd` runs at build time (CMake `add_custom_command`) over the vendored
 files and emits one C++ source file with the tables, so there is no runtime
-file access and no download at build time. Updating Unicode means running
-`scripts/update-ucd.sh <version>`, rebuilding, and fixing whatever the
-generator rejects.
+file access and no download at build time. Configuration verifies every
+vendored file against its `SHA256SUMS` (`data/ucd/`, `data/cldr/`). Updating
+Unicode means running `scripts/update-ucd.sh <version>`, rebuilding, and fixing
+whatever the generator rejects; updating CLDR means
+`scripts/update-cldr.sh <release-tag>` (for example `release-48-2`), which
+fetches `common/annotations/en.xml` from the CLDR repository at that tag.
 
 The generator reports malformed input with file, line number and a plain
 message, exits non-zero, and refuses unknown `First`/`Last` range names rather
 than guessing (a new Unicode version adding a range must be taught explicitly).
+It also refuses a CLDR annotation line it does not recognize, an unknown XML
+entity, a second short name for one code point, and an annotation of a code
+point that `UnicodeData.txt` does not list (a CLDR release newer than the
+Unicode data).
 
 Tables carry: for every explicitly listed code point its general category and
 name; the `First`/`Last` ranges with their derivation rule; all aliases with
-their type; the East Asian Wide/Fullwidth ranges; the Unicode version (parsed
-from the header of `NameAliases.txt`). Categories are emitted as
+their type; the East Asian Wide/Fullwidth ranges; the CLDR annotations of
+single code points (short name or keyword, normalized to name form, sorted by
+code point with the short name first); the Unicode version (parsed from the
+header of `NameAliases.txt`). Categories are emitted as
 `tellmeutf::ucd::Category::Xx` identifiers, never as bare numbers, so the
 enum order in `ucd.hpp` is free to change.
 
@@ -376,4 +456,6 @@ no emojis. Builds clean with the warning set in the top-level CMakeLists.txt.
 Unit tests cover realistic inputs and corner cases at function level; they do
 not pin whitespace or layout. `tests/e2e.sh <path-to-tellmeutf>` drives the real
 binary and checks exit status and the presence of key facts (code point,
-name), not column arrangement. Build trees live under `/workspace/build/`.
+name), not column arrangement. Behavior that depends on the vendored CLDR data
+is tested with a few stable facts (`backslash` is U+005C, `tick` lists U+2714
+before U+27E4), not with whole result lists. Build trees live under `/workspace/build/`.

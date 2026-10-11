@@ -44,6 +44,26 @@ tellmeutf: 'arrow' matches 646 characters; showing the first 2. Add more words t
 0x00002191  U+2191  ↑   UPWARDS ARROW
 ```
 
+Everyday names work too. The English annotations of the Unicode CLDR project
+give many characters a short name and keywords (`backslash` for REVERSE SOLIDUS,
+`tick` for the check marks, `pipe` for VERTICAL LINE, `love` for the hearts), and
+they are matched like names:
+
+```
+$ tellmeutf -s backslash
+0x0000005C  U+005C  \   REVERSE SOLIDUS
+
+$ tellmeutf -m 4 tick
+tellmeutf: 'tick' matches 24 characters; showing the first 4. Add more words to narrow it down, or raise --max to list more.
+0x00002611  U+2611  ☑   BALLOT BOX WITH CHECK
+0x00002705  U+2705  ✅  WHITE HEAVY CHECK MARK
+0x00002714  U+2714  ✔   HEAVY CHECK MARK
+0x000027E4  U+27E4  ⟤   WHITE SQUARE WITH LEFTWARDS TICK
+```
+
+An official name or alias always wins over a CLDR one. `--exact` keeps them (they
+are not approximations).
+
 A misspelled name still finds its character: when nothing matches strictly, the
 closest names are tried (typos, words run together or split apart, plurals,
 extra words). A clear winner is shown with a note on stderr:
@@ -117,10 +137,12 @@ small sentence-embedding model (all-MiniLM-L6-v2, 8-bit) that runs locally on
 the CPU; nothing leaves the machine.
 
 It replaces name matching for that run, so use the default mode for exact names.
-It is weak where the answer needs outside knowledge (`tick` for CHECK MARK,
-`love` for a heart) and for ASCII punctuation by its common name (`pipe`,
-`backslash`); the default name matching does better there. In ranked lists
-similar names crowd each other (BLACK and WHITE variants).
+It searches the same labels as name matching, including the CLDR short names and
+keywords, so everyday words such as `tick` and `pipe` find their characters
+here too (keyword rows are discounted so that a word listed by many characters
+does not crowd out the one it names). It still has no knowledge of words CLDR
+lacks (`shift key`), and in ranked lists similar names crowd each other (BLACK
+and WHITE variants).
 
 To enable it, download the model and ONNX Runtime once, then build with the
 option on:
@@ -135,25 +157,26 @@ when you passed it a directory other than the default. It verifies every
 download against pinned SHA-256 checksums (about 35 MB in all). The files live in
 `${XDG_DATA_HOME:-$HOME/.local/share}/tellmeutf/semantic` and the index is cached
 in `${XDG_CACHE_HOME:-$HOME/.cache}/tellmeutf/semantic-index.bin`. The first use
-builds that index (about 55 MB, around 8 seconds) and says so on stderr; it is
+builds that index (about 70 MB, around 6 seconds) and says so on stderr; it is
 rebuilt automatically when the data changes. Set `TELLMEUTF_SEMANTIC_DIR` to use
 another directory for the model files.
 
 All arguments are joined into one description. The best matches are listed with
-their cosine similarity (0 to 1, higher is closer) in front, up to `--max` rows;
+their cosine similarity (0 to 1, higher is closer; a CLDR keyword hit is
+discounted, so it shows at most about 0.7) in front, up to `--max` rows;
 matches below 0.30 are dropped. `-s` shows only the best match. `-C` has no
 effect here, and `-e` cannot be combined with `-S`.
 
 ```
 $ tellmeutf -S -m 5 sad face
-0.66  0x0001F622  U+1F622  😢  CRYING FACE
+0.73  0x0001F625  U+1F625  😥  DISAPPOINTED BUT RELIEVED FACE
+0.67  0x0001F622  U+1F622  😢  CRYING FACE
 0.64  0x0001F61E  U+1F61E  😞  DISAPPOINTED FACE
-0.60  0x0001F620  U+1F620  😠  ANGRY FACE
+0.61  0x0001F620  U+1F620  😠  ANGRY FACE
 0.60  0x0001F979  U+1F979  🥹  FACE HOLDING BACK TEARS
-0.58  0x0001F972  U+1F972  🥲  SMILING FACE WITH TEAR
 
 $ tellmeutf -S -s degrees
-0.68  0x000000B0  U+00B0  °   DEGREE SIGN
+0.87  0x000000B0  U+00B0  °   DEGREE SIGN
 ```
 
 The scores are not probabilities: judge a result by the gap between rows. A
@@ -175,6 +198,9 @@ The binary is `build/src/tellmeutf`.
 
 ## Unicode data
 
-The Unicode Character Database files are vendored under `data/ucd/` and
+The Unicode Character Database files are vendored under `data/ucd/` and the
+CLDR English annotations (short names and keywords) under `data/cldr/`; both are
 compiled into the program at build time, so there is no runtime file access.
-See `docs/design.md` for the details.
+`scripts/update-ucd.sh <version>` and `scripts/update-cldr.sh <release-tag>`
+replace them. Both are used under the Unicode License v3 (`LICENSE-UNICODE.txt`
+in each directory). See `docs/design.md` for the details.

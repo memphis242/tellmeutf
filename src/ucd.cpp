@@ -49,13 +49,23 @@ namespace tbl = ::tellmeutf::ucd::tables;
 
 namespace internal {
 
-// ASCII uppercase copy; other bytes are kept as they are.
-std::string uppercase(const std::string_view text) {
-    std::string result(text);
-    for (char &c : result) {
-        if (c >= 'a' && c <= 'z') {
-            c = static_cast<char>(c - 'a' + 'A');
+// ASCII uppercase copy without apostrophes (' and the typographic U+2019), so
+// that "woman's" reads as WOMANS; other bytes are kept as they are. No official
+// name or alias contains an apostrophe.
+std::string normalize_query(const std::string_view text) {
+    constexpr std::string_view kTypographicApostrophe = "\xE2\x80\x99";
+    std::string result;
+    result.reserve(text.size());
+    for (std::size_t i = 0; i < text.size(); ++i) {
+        const char c = text[i];
+        if (c == '\'') {
+            continue;
         }
+        if (text.substr(i).starts_with(kTypographicApostrophe)) {
+            i += kTypographicApostrophe.size() - 1;
+            continue;
+        }
+        result.push_back(c >= 'a' && c <= 'z' ? static_cast<char>(c - 'a' + 'A') : c);
     }
     return result;
 }
@@ -89,7 +99,7 @@ void split_words(const std::string_view text, std::vector<std::string_view> &wor
 }  // namespace internal
 
 using internal::split_words;
-using internal::uppercase;
+using internal::normalize_query;
 
 namespace {
 
@@ -271,10 +281,10 @@ void find_ideograph(const std::vector<std::string_view> &words, std::vector<char
 // ---------------------------------------------------------------------------
 // Labels: every searchable (code point, name) pair
 
-// Calls visit(cp, label) for each table name, each alias, and each Hangul
-// syllable name. Labels in angle brackets are not names and are skipped.
+// Calls visit(cp, label) for each table name and each alias. Labels in angle
+// brackets are not names and are skipped.
 template <class Visit>
-void for_each_label(Visit &&visit) {
+void for_each_official_label(Visit &&visit) {
     for (const struct tbl::Entry &entry : tbl::kTables.entries) {
         const std::string_view name = name_text(entry.name);
         if (!name.starts_with('<')) {
@@ -284,29 +294,74 @@ void for_each_label(Visit &&visit) {
     for (const struct tbl::Alias &alias : tbl::kTables.aliases) {
         visit(alias.cp, name_text(alias.name));
     }
+}
+
+// Calls visit(cp, label) for each Hangul syllable name.
+template <class Visit>
+void for_each_hangul_label(Visit &&visit) {
     for (char32_t cp = kHangulFirst; cp <= kHangulLast; ++cp) {
         const std::string name = hangul_name(cp);
         visit(cp, std::string_view(name));
     }
 }
 
+// Calls visit(cp, text) for each CLDR annotation of kind `kind`.
+template <class Visit>
+void for_each_annotation(const tbl::AnnotationKind kind, Visit &&visit) {
+    for (const struct tbl::Annotation &annotation : tbl::kTables.annotations) {
+        if (annotation.kind == kind) {
+            visit(annotation.cp, name_text(annotation.text));
+        }
+    }
+}
+
+// Calls visit(cp, text) for every CLDR short name and keyword.
+template <class Visit>
+void for_each_annotation_label(Visit &&visit) {
+    for (const struct tbl::Annotation &annotation : tbl::kTables.annotations) {
+        visit(annotation.cp, name_text(annotation.text));
+    }
+}
+
+// Every label search() looks at: names, aliases, CLDR short names and
+// keywords, and Hangul syllable names.
+template <class Visit>
+void for_each_label(Visit &&visit) {
+    for_each_official_label(visit);
+    for_each_annotation_label(visit);
+    for_each_hangul_label(visit);
+}
+
+// Code points that have a label, among those `for_each` visits, whose words
+// equal `query_words`. Unsorted, may repeat a code point.
+template <class ForEach>
+[[nodiscard]] std::vector<char32_t> labels_equal_to(const std::vector<std::string_view> &query_words, ForEach &&for_each) {
+    std::vector<char32_t> found;
+    std::vector<std::string_view> label_words;
+    for_each([&](const char32_t cp, const std::string_view label) {
+        split_words(label, label_words);
+        if (std::ranges::equal(label_words, query_words)) {
+            found.push_back(cp);
+        }
+    });
+    return found;
+}
+
 }  // namespace
 
 namespace internal {
 
-void visit_labels(const bool include_hangul, const std::function<void(char32_t, std::string_view)> &visit) {
+void visit_labels(const bool include_hangul,
+                  const std::function<void(char32_t, std::string_view, LabelOrigin)> &visit) {
+    const auto official = [&visit](const char32_t cp, const std::string_view label) {
+        visit(cp, label, LabelOrigin::Official);
+    };
+    for_each_official_label(official);
+    for_each_annotation_label([&visit](const char32_t cp, const std::string_view label) {
+        visit(cp, label, LabelOrigin::Annotation);
+    });
     if (include_hangul) {
-        for_each_label(visit);
-        return;
-    }
-    for (const struct tbl::Entry &entry : tbl::kTables.entries) {
-        const std::string_view name = name_text(entry.name);
-        if (!name.starts_with('<')) {
-            visit(entry.cp, name);
-        }
-    }
-    for (const struct tbl::Alias &alias : tbl::kTables.aliases) {
-        visit(alias.cp, name_text(alias.name));
+        for_each_hangul_label(official);
     }
 }
 
@@ -370,22 +425,21 @@ CharInfo lookup(const char32_t cp) {
 }
 
 std::vector<char32_t> find_exact(const std::string_view name) {
-    const std::string query = uppercase(name);
+    const std::string query = normalize_query(name);
     std::vector<std::string_view> query_words;
     split_words(query, query_words);
     if (query_words.empty()) {
         return {};
     }
 
-    std::vector<char32_t> found;
-    std::vector<std::string_view> label_words;
-    for_each_label([&](const char32_t cp, const std::string_view label) {
-        split_words(label, label_words);
-        if (std::ranges::equal(label_words, query_words)) {
-            found.push_back(cp);
-        }
+    std::vector<char32_t> found = labels_equal_to(query_words, [](auto &&visit) {
+        for_each_official_label(visit);
+        for_each_hangul_label(visit);
     });
     find_ideograph(query_words, found);
+    if (found.empty()) {
+        found = labels_equal_to(query_words, [](auto &&visit) { for_each_annotation(tbl::AnnotationKind::ShortName, visit); });
+    }
 
     std::ranges::sort(found);
     const auto duplicates = std::ranges::unique(found);
@@ -394,7 +448,7 @@ std::vector<char32_t> find_exact(const std::string_view name) {
 }
 
 std::vector<char32_t> search(const std::string_view query) {
-    const std::string upper = uppercase(query);
+    const std::string upper = normalize_query(query);
     std::vector<std::string_view> query_words;
     split_words(upper, query_words);
     if (query_words.empty()) {
@@ -467,19 +521,36 @@ namespace {
            hex == canonical_hex(value) && value == static_cast<unsigned>(cp);
 }
 
+// True when `text` is, character for character, a name or alias of `cp`.
+[[nodiscard]] bool is_official_label(const char32_t cp, const std::string_view text) {
+    if (const struct tbl::Entry *const entry = find_entry(cp); entry != nullptr && name_text(entry->name) == text) {
+        return true;
+    }
+    const std::span<const struct tbl::Alias> aliases = aliases_of(cp);
+    return std::ranges::any_of(aliases, [text](const struct tbl::Alias &alias) { return name_text(alias.name) == text; });
+}
+
 }  // namespace
 
 std::vector<Label> descriptive_labels() {
     std::vector<Label> labels;
-    labels.reserve(tbl::kTables.entries.size() + tbl::kTables.aliases.size());
+    labels.reserve(tbl::kTables.entries.size() + tbl::kTables.aliases.size() + tbl::kTables.annotations.size());
     for (const struct tbl::Entry &entry : tbl::kTables.entries) {
         const std::string_view name = name_text(entry.name);
         if (!name.starts_with('<') && !is_code_point_name(entry.cp, name)) {
-            labels.push_back(Label{.cp = entry.cp, .text = std::string(name)});
+            labels.push_back(Label{.cp = entry.cp, .text = std::string(name), .kind = LabelKind::Name});
         }
     }
     for (const struct tbl::Alias &alias : tbl::kTables.aliases) {
-        labels.push_back(Label{.cp = alias.cp, .text = std::string(name_text(alias.name))});
+        labels.push_back(Label{.cp = alias.cp, .text = std::string(name_text(alias.name)), .kind = LabelKind::Alias});
+    }
+    for (const struct tbl::Annotation &annotation : tbl::kTables.annotations) {
+        const std::string_view text = name_text(annotation.text);
+        if (!is_official_label(annotation.cp, text)) {
+            const LabelKind kind =
+                annotation.kind == tbl::AnnotationKind::ShortName ? LabelKind::ShortName : LabelKind::Keyword;
+            labels.push_back(Label{.cp = annotation.cp, .text = std::string(text), .kind = kind});
+        }
     }
     return labels;
 }

@@ -67,13 +67,31 @@ struct WideRange {
     char32_t last = 0;
 };
 
+// What a CLDR annotation text is.
+enum class AnnotationKind : std::uint8_t {
+    ShortName,  // the character's CLDR short name ("tts" annotation)
+    Keyword,    // one search keyword
+};
+
+// A CLDR annotation of one code point, already normalized to the form of a
+// name: upper case ASCII words separated by single spaces (and medial hyphens).
+// Annotations are sorted by `cp`, then short name before keywords; keywords of
+// one code point keep their order in the source file. A code point has at most
+// one short name, and no text repeats within a code point.
+struct Annotation {
+    char32_t cp = 0;
+    AnnotationKind kind = AnnotationKind::Keyword;
+    NameRef text;
+};
+
 struct Tables {
     std::string_view version;
-    std::string_view names;  // blob that every NameRef points into
+    std::string_view names;  // blob that every NameRef and Annotation text points into
     std::span<const Entry> entries;
     std::span<const Range> ranges;
     std::span<const Alias> aliases;
     std::span<const WideRange> wide;
+    std::span<const Annotation> annotations;
 };
 
 extern const Tables kTables;

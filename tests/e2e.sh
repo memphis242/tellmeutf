@@ -217,6 +217,34 @@ run -s heavy check mark
 out_has U+2714
 [[ ! -s $err ]] || fail "strict name: stderr should be empty"
 
+# CLDR short names and keywords find characters by their everyday names, with
+# or without --exact (they are not approximate matches).
+for flag in "" -e; do
+    cmd="$flag backslash"
+    run $flag -s backslash
+    [[ $status -eq 0 && $(rows) -eq 1 ]] || fail "$cmd: status $status rows $(rows)"
+    out_has U+005C
+    [[ ! -s $err ]] || fail "$cmd: stderr should be empty"
+done
+cmd="backslash with context"
+run backslash
+[[ $status -eq 0 && $(grep -c '^>' "$out") -eq 1 ]] || fail "$cmd: status $status"
+out_has U+005C
+cmd="woman's boot"
+run -s "woman's boot"
+[[ $status -eq 0 ]] || fail "$cmd: status $status"
+out_has U+1F462
+cmd="tick"
+run -e -m 30 tick
+[[ $status -eq 3 ]] || fail "$cmd: status $status, wanted 3"
+out_has U+2714
+err_has_text
+# The CLDR keyword ranks ahead of the longer official names that contain TICK.
+heavy_line=$(grep -n 'U+2714' "$out" | head -1 | cut -d: -f1)
+square_line=$(grep -n 'U+27E4' "$out" | head -1 | cut -d: -f1)
+[[ -n $heavy_line && -n $square_line && $heavy_line -lt $square_line ]] || fail "$cmd: U+2714 should come before U+27E4"
+cmd=
+
 # Echoed user text is escaped: an ESC byte in a name never reaches stderr.
 cmd="ESC in name"
 run $'qzxjv\x1b[2Jnope'
@@ -320,6 +348,17 @@ else
         run -S -s trash can
         [[ $status -eq 0 ]] || fail "$cmd: status $status"
         [[ $(rows) -eq 1 ]] || fail "$cmd: expected 1 row, got $(rows)"
+
+        # CLDR keywords give the model rows for everyday words that no name
+        # contains: tick, pipe.
+        cmd="-S -m 10 tick"
+        run -S -m 10 tick
+        [[ $status -eq 0 ]] || fail "$cmd: status $status"
+        out_has U+2714
+        cmd="-S -m 10 pipe"
+        run -S -m 10 pipe
+        [[ $status -eq 0 ]] || fail "$cmd: status $status"
+        out_has U+007C
 
         cmd="-S -m 3 sad face"
         run -S -m 3 sad face

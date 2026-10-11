@@ -71,6 +71,27 @@ void test_duplicates_fill_the_window() {
     CHECK(top[0].cp == 0x41 && top[1].cp == 0x42 && top[2].cp == 0x43);
 }
 
+void test_row_weights() {
+    // Rows tie at 10 degrees; weights make the first one count for less, so
+    // the later rows lead and Match::score is the weighted product.
+    const sem::VectorIndex index = make_index({0x41, 0x42, 0x43}, {10, 10, 10});
+    const std::vector<float> query = direction(10, 4);
+    const std::vector<float> weights = {0.7f, 1.0f, 0.99f};
+    const std::vector<sem::Match> top = index.search(query, 3, weights);
+    CHECK(top.size() == 3);
+    CHECK(top[0].cp == 0x42 && top[1].cp == 0x43 && top[2].cp == 0x41);
+    CHECK(top.size() == 3 && std::fabs(top[2].score - 0.7f) < 1e-5f && std::fabs(top[0].score - 1.0f) < 1e-5f);
+
+    // A heavily discounted near-exact row still beats a far row.
+    const sem::VectorIndex spread = make_index({0x41, 0x42}, {0, 80});
+    const std::vector<sem::Match> best = spread.search(direction(0, 4), 2, std::vector<float>{0.7f, 1.0f});
+    CHECK(best.size() == 2 && best[0].cp == 0x41 && best[1].cp == 0x42);
+
+    // No weights, and weights of 1.0, give the unweighted order.
+    CHECK(index.search(query, 3).front().cp == 0x41);
+    CHECK(index.search(query, 3, std::vector<float>(3, 1.0f)).front().cp == 0x41);
+}
+
 void test_ties_order_by_row() {
     const sem::VectorIndex index = make_index({0x50, 0x4F, 0x4E}, {10, 10, 10});
     const std::vector<sem::Match> top = index.search(direction(10, 4), 3);
@@ -209,6 +230,7 @@ int main() {
     test_search_order_and_dedupe();
     test_duplicates_fill_the_window();
     test_ties_order_by_row();
+    test_row_weights();
     test_create_rejects_bad_shapes();
     test_corpus_hash();
     test_paths();

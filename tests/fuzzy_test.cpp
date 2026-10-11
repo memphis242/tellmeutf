@@ -48,14 +48,15 @@ constexpr std::array kCases = {
     Case{"zero widht joiner", "ZERO WIDTH JOINER", 3},
     Case{"summaton", "N-ARY SUMMATION", 3},
     // Word-boundary slips: run together, split apart, hyphen forms.
-    Case{"checkmark", "CHECK MARK", 1},
-    Case{"rightarrow", "RIGHTWARDS ARROW", 3},
+    Case{"checkmark", "CHECK MARK;HEAVY CHECK MARK;WHITE HEAVY CHECK MARK", 3},
+    Case{"rightarrow", "RIGHTWARDS ARROW;BLACK RIGHTWARDS ARROW", 3},
     Case{"blackheart", "BLACK HEART SUIT;BLACK HEART", 2},
     Case{"black heartsuit", "BLACK HEART SUIT", 1},
     Case{"pile ofpoo", "PILE OF POO", 1},
     Case{"pileofpoo", "PILE OF POO", 1},
     Case{"partypopper", "PARTY POPPER", 1},
     Case{"thumbsup", "THUMBS UP SIGN", 1},
+    Case{"tickk", "HEAVY CHECK MARK;WHITE HEAVY CHECK MARK;BALLOT BOX WITH CHECK", 3},  // typo of a CLDR keyword
     Case{"emdash", "EM DASH", 1},
     Case{"endash", "EN DASH", 1},
     Case{"zerowidth joiner", "ZERO WIDTH JOINER", 1},
@@ -116,6 +117,15 @@ void test_development_set() {
     CHECK(third * 20 >= kCases.size() * 19);
 }
 
+void test_official_name_wins_a_tie() {
+    // U+26C4 is also called "snowman" by CLDR, with the same word evidence as
+    // the official SNOWMAN (U+2603); the official name leads by a clear margin.
+    const std::vector<ucd::FuzzyMatch> matches = ucd::fuzzy_search("snowmann", 5);
+    CHECK(matches.size() >= 2);
+    CHECK(matches.size() >= 2 && matches[0].cp == 0x2603 && matches[1].cp == 0x26C4);
+    CHECK(ucd::is_confident(matches));
+}
+
 void test_strict_answers_survive() {
     // A name the strict path resolves is also the best fuzzy match.
     for (const std::string_view name : {"HEAVY CHECK MARK", "SNOWMAN", "PILE OF POO", "LINE FEED", "NBSP", "ZERO WIDTH JOINER"}) {
@@ -138,12 +148,12 @@ bool is_algorithmic_or_unnamed(const char32_t cp) {
 
 void test_hangul_is_opt_in() {
     // A typo never resolves to an algorithmic Hangul syllable name.
-    const std::vector<ucd::FuzzyMatch> dice = ucd::fuzzy_search("dice", 50);
-    for (const ucd::FuzzyMatch &match : dice) {
+    const std::vector<ucd::FuzzyMatch> allow = ucd::fuzzy_search("allow", 50);
+    for (const ucd::FuzzyMatch &match : allow) {
         CHECK(!is_hangul_syllable(match.cp));
     }
-    // It only hides across the word boundary of another name (SHAVED ICE), which is not evidence to act on.
-    CHECK(!ucd::is_confident(dice));
+    // It only hides inside a longer word of another name (SHALLOW PAN OF FOOD), which is not evidence to act on.
+    CHECK(!ucd::is_confident(allow));
     // Mentioning HANGUL or SYLLABLE (even misspelled) makes them eligible.
     for (const std::string_view query : {"hangul syllable gagg", "hangul sylable gag", "hangl syllable gagg"}) {
         const std::vector<ucd::FuzzyMatch> matches = ucd::fuzzy_search(query, 5);
@@ -158,7 +168,10 @@ void test_common_words_never_confidently_unnamed() {
         "smiley", "coffee", "sunny", "laptop", "sunshine", "burger", "tickmark", "thumbsdown",
         "heartbreak", "poop", "dollars", "tm", "infinite", "rainy", "cloudy", "snowy",
         "happyface", "sadface", "hashtag", "mailboxes", "checkbox", "cellphone", "dice", "tick",
-        "bolt", "newline", "thumb", "pizza", "rain", "ghost"};
+        "bolt", "newline", "thumb", "pizza", "rain", "ghost", "doggo", "chilly", "bunnies",
+        "downarrow", "uparrow", "thumbup", "lightbulb", "tearsofjoy", "highfive", "peacesign",
+        "raincloud", "bigsmile", "frowny", "gloomy", "sparkly", "nerdy", "warmth", "cooler",
+        "lovely", "sadness", "joyful", "tearful", "grumpy", "sillyface", "partyface"};
     std::size_t probed = 0;
     for (const std::string_view word : kWords) {
         if (!ucd::find_exact(std::string(word)).empty() || !ucd::search(word).empty()) {
@@ -184,11 +197,13 @@ void test_common_words_never_confidently_unnamed() {
 
 void test_weak_typos_are_not_confident() {
     // One short word that is two edits from another word proves nothing.
-    CHECK(!ucd::is_confident(ucd::fuzzy_search("coffee", 5)));
+    CHECK(!ucd::is_confident(ucd::fuzzy_search("annual", 5)));
+    // Two edits from an everyday word that only CLDR text uses (BACKPACK) is no evidence either.
+    CHECK(!ucd::is_confident(ucd::fuzzy_search("backtick", 5)));
     // The same typos on long words, or glued names, are trustworthy.
     for (const std::string_view query : {"pinapple", "elephent", "strawbery", "hamburgr", "lightening", "chek mark",
                                          "snowmann", "thumbs upp", "fullstop", "questionmark", "exclamationmark",
-                                         "checkmark", "pile of poo emoji"}) {
+                                         "pile of poo emoji"}) {
         CHECK(ucd::is_confident(ucd::fuzzy_search(query, 5)));
     }
 }
@@ -275,6 +290,7 @@ void test_confidence_rule() {
 int main() {
     test_development_set();
     test_strict_answers_survive();
+    test_official_name_wins_a_tie();
     test_hangul_is_opt_in();
     test_common_words_never_confidently_unnamed();
     test_weak_typos_are_not_confident();

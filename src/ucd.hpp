@@ -45,32 +45,45 @@ struct CharInfo {
 [[nodiscard]] CharInfo lookup(char32_t cp);
 
 // Code points whose name or alias equals `name` word for word (case, spacing,
-// underscores and medial hyphens are not significant; see docs/design.md,
-// "Name matching"). Ascending code point order. Empty when nothing matches or
-// when `name` has no words.
+// underscores, medial hyphens and apostrophes are not significant; see
+// docs/design.md, "Name matching"). When no name or alias does, those whose
+// CLDR short name ("backslash" for U+005C) equals it. Ascending code point
+// order. Empty when nothing matches or when `name` has no words.
 [[nodiscard]] std::vector<char32_t> find_exact(std::string_view name);
 
 // Code points for which every word of `query` is a prefix of some word of one
-// of the code point's names or aliases, best match first (see docs/design.md,
-// "Name matching"). Each code point appears once. Empty when nothing matches or
-// when `query` has no words. Does not enumerate the ideograph ranges.
+// of the code point's labels: its names, aliases, CLDR short name and CLDR
+// keywords ("tick" for U+2714). Best match first (see docs/design.md, "Name
+// matching"). Each code point appears once. Empty when nothing matches or when
+// `query` has no words. Does not enumerate the ideograph ranges.
 [[nodiscard]] std::vector<char32_t> search(std::string_view query);
 
-// A name or alias together with the code point it describes.
+// What a label is.
+enum class LabelKind : std::uint8_t {
+    Name,       // an official Unicode name
+    Alias,      // a name alias
+    ShortName,  // the CLDR short name
+    Keyword,    // a CLDR keyword
+};
+
+// A name, alias, CLDR short name or CLDR keyword together with the code point it
+// describes.
 struct Label {
     char32_t cp = 0;
     std::string text;
+    LabelKind kind = LabelKind::Name;
 
     [[nodiscard]] bool operator==(const Label &) const = default;
 };
 
-// Every name and alias that describes a character in words: all explicitly
-// listed names and all aliases, excluding the algorithmic names (ideograph
-// ranges, Hangul syllables), the listed names that only spell their own code
-// point in hexadecimal ("CJK COMPATIBILITY IDEOGRAPH-F900"), and the
-// angle-bracket labels. Text is as stored
-// (upper case ASCII). Order is stable: listed names by code point, then
-// aliases.
+// Every name, alias, CLDR short name and CLDR keyword that describes a
+// character in words: all explicitly listed names and all aliases, excluding
+// the algorithmic names (ideograph ranges, Hangul syllables), the listed names
+// that only spell their own code point in hexadecimal ("CJK COMPATIBILITY
+// IDEOGRAPH-F900"), and the angle-bracket labels; then the CLDR texts that are
+// not already a name or alias of the same code point. Text is as stored (upper
+// case ASCII). Order is stable: listed names by code point, then aliases, then
+// CLDR texts by code point (short name before keywords).
 [[nodiscard]] std::vector<Label> descriptive_labels();
 
 struct FuzzyMatch {
@@ -85,13 +98,13 @@ struct FuzzyMatch {
     bool weak_word_match = false;
 };
 
-// Approximate best-match retrieval over every name and alias (the same labels
-// as search()): tolerates typos, run-together or split words, plural and
-// -ing/-ed/-ly variants, extra or missing words and a different word order
-// (see docs/design.md, "Approximate fallback"). Best first, at most `limit`
-// entries, each code point once. Empty when the query has no words, holds a
-// non-ASCII byte, is too long, or nothing is similar enough. The first call
-// builds an index; later calls reuse it. Thread-safe.
+// Approximate best-match retrieval over every label (names, aliases, CLDR short
+// names and keywords, as search()): tolerates typos, run-together or split
+// words, plural and -ing/-ed/-ly variants, extra or missing words and a
+// different word order (see docs/design.md, "Approximate fallback"). Best
+// first, at most `limit` entries, each code point once. Empty when the query
+// has no words, holds a non-ASCII byte, is too long, or nothing is similar
+// enough. The first call builds an index; later calls reuse it. Thread-safe.
 [[nodiscard]] std::vector<FuzzyMatch> fuzzy_search(std::string_view query, std::size_t limit);
 
 // True when matches.front() stands clearly above the rest and rests on strong

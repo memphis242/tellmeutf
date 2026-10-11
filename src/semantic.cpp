@@ -52,12 +52,38 @@ void tell(const std::function<void(std::string_view)> &notify, const std::string
 struct Corpus {
     std::vector<char32_t> code_points;
     std::vector<std::string> texts;
+    std::vector<float> weights;  // per row, see label_weight()
 };
+
+// What a row's similarity is multiplied by when ranking. Official names and
+// aliases count in full. A CLDR short name is nearly as good, which only
+// settles ties in favor of the official name. A CLDR keyword is a looser
+// synonym shared by many characters: a one-word query equals the keyword row
+// of every character that lists it, so unweighted those rows would crowd out
+// the characters the word names. At this weight a keyword leads only when
+// nothing else is close. The values come from measurements on a set of
+// held-out descriptions (docs/design.md, "Semantic search").
+constexpr float kShortNameWeight = 0.99f;
+constexpr float kKeywordWeight = 0.7f;
+
+[[nodiscard]] float label_weight(const ucd::LabelKind kind) {
+    switch (kind) {
+    case ucd::LabelKind::Name:
+    case ucd::LabelKind::Alias:
+        return 1.0f;
+    case ucd::LabelKind::ShortName:
+        return kShortNameWeight;
+    case ucd::LabelKind::Keyword:
+        return kKeywordWeight;
+    }
+    return 1.0f;
+}
 
 [[nodiscard]] Corpus load_corpus() {
     Corpus corpus;
     for (ucd::Label &label : ucd::descriptive_labels()) {
         corpus.code_points.push_back(label.cp);
+        corpus.weights.push_back(label_weight(label.kind));
         corpus.texts.push_back(std::move(label.text));
     }
     return corpus;
@@ -129,6 +155,7 @@ search(const std::string_view query, const std::size_t limit, const std::functio
     }
 
     Corpus corpus = load_corpus();
+    const std::vector<float> weights = corpus.weights;
     const IndexKey key{.dim = kEmbeddingDim,
                        .count = corpus.texts.size(),
                        .model_size = size_of(model_path),
@@ -184,7 +211,7 @@ search(const std::string_view query, const std::size_t limit, const std::functio
     if (!vector) {
         return std::unexpected(vector.error());
     }
-    return index->search(*vector, limit);
+    return index->search(*vector, limit, weights);
 }
 
 }  // namespace tellmeutf::semantic

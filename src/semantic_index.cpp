@@ -122,15 +122,18 @@ std::expected<VectorIndex, Error> VectorIndex::create(std::vector<char32_t> code
     return index;
 }
 
-std::vector<Match> VectorIndex::search(const std::span<const float> query, const std::size_t limit) const {
+std::vector<Match> VectorIndex::search(const std::span<const float> query, const std::size_t limit,
+                                       const std::span<const float> row_weights) const {
     assert(query.size() == dim_);
+    assert(row_weights.empty() || row_weights.size() == size());
     const std::size_t count = size();
     if (limit == 0 || count == 0) {
         return {};
     }
     std::vector<float> scores(count);
     for (std::size_t i = 0; i < count; ++i) {
-        const float score = dot(rows_.data() + i * dim_, query.data(), dim_);
+        const float similarity = dot(rows_.data() + i * dim_, query.data(), dim_);
+        const float score = row_weights.empty() ? similarity : similarity * row_weights[i];
         // A NaN (from a damaged file) must not break the strict ordering below.
         scores[i] = std::isnan(score) ? -std::numeric_limits<float>::infinity() : score;
     }

@@ -47,9 +47,12 @@ public:
     [[nodiscard]] std::span<const float> rows() const { return rows_; }
 
     // Best matches by dot product, best first, at most `limit`, each code
-    // point once (its best row). Ties order by row. Precondition:
-    // query.size() == dim().
-    [[nodiscard]] std::vector<Match> search(std::span<const float> query, std::size_t limit) const;
+    // point once (its best row). Ties order by row. When `row_weights` is not
+    // empty, each row's dot product is multiplied by its weight before ranking,
+    // and Match::score is that product. Preconditions: query.size() == dim();
+    // row_weights is empty or has size() entries.
+    [[nodiscard]] std::vector<Match> search(std::span<const float> query, std::size_t limit,
+                                            std::span<const float> row_weights = {}) const;
 
 private:
     friend class IndexFile;
