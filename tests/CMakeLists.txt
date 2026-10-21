@@ -25,4 +25,7 @@ if(TELLMEUTF_SEMANTIC)
   target_compile_definitions(embedder_parity_test PRIVATE TELLMEUTF_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
   tellmeutf_unit_test(semantic_e2e_test tellmeutf_semantic)
   set_tests_properties(embedder_parity_test semantic_e2e_test PROPERTIES SKIP_RETURN_CODE 77)
+else()
+  # The disabled facade is only linked when semantic search is off.
+  tellmeutf_unit_test(semantic_disabled_test tellmeutf_semantic)
 endif()
