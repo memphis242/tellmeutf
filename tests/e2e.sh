@@ -317,8 +317,13 @@ fi
 if [[ -w /dev/full ]]; then
     "$bin" U+276F >/dev/full 2>"$err"
     status=$?
-    [[ $status -eq 4 ]] || fail "/dev/full: status $status, wanted 4"
-    [[ -s $err ]] || fail "/dev/full: stderr is empty"
+    [[ $status -eq 4 ]] || fail "/dev/full flush: status $status, wanted 4"
+    grep -qF -- "could not write the output" "$err" || fail "/dev/full flush: write failure is not reported"
+
+    "$bin" -C 1000 U+276F >/dev/full 2>"$err"
+    status=$?
+    [[ $status -eq 4 ]] || fail "/dev/full write: status $status, wanted 4"
+    grep -qF -- "could not write the output" "$err" || fail "/dev/full write: failure is not reported"
 fi
 
 # Semantic search (-S). A build without it exits 5 and prints nothing on stdout;
