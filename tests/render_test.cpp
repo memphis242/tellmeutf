@@ -140,6 +140,24 @@ int main() {
         CHECK(bold.rfind('\x1b') < bold.find("FOURTH"));
     }
 
+    // A target prefix and marker are part of the bold row, while neighboring rows stay plain.
+    {
+        const std::vector<std::string> prefixes{"0.91  ", "0.80  ", "0.79  ", "0.60  ", "0.51  "};
+        const std::string block =
+            render::render_block(rows, 2, {.marker_column = true, .bold_target = true}, prefixes);
+        const std::size_t bold_on = block.find("\x1b[1m");
+        const std::size_t target_prefix = block.find("0.79  > 0x0000276F");
+        const std::size_t target_name = block.find("THIRD");
+        const std::size_t bold_off = block.find("\x1b[0m");
+        CHECK(bold_on != std::string::npos && target_prefix != std::string::npos && bold_on < target_prefix);
+        CHECK(target_name != std::string::npos && bold_off != std::string::npos);
+        CHECK(target_prefix < target_name && target_name < bold_off);
+        CHECK(std::count(block.begin(), block.end(), '\x1b') == 2);
+        CHECK(block.find("0.91  ") < bold_on);
+        const std::size_t following_name = block.find("FOURTH");
+        CHECK(following_name != std::string::npos && following_name > bold_off);
+    }
+
     // The U+ cell is padded to the widest in the block, so the glyph column lines up.
     {
         const std::vector<ucd::CharInfo> mixed = {info(0xFFFF, ucd::Category::Cn, "LOW"),
